@@ -10,7 +10,6 @@ from keras.models import load_model, Sequential
 from keras.utils import to_categorical
 
 from config import Config
-from data import generate_input
 
 SEED = 0
 random.seed(SEED)
@@ -19,7 +18,7 @@ tf.random.set_seed(SEED)
 
 
 class Constants:
-    kinds = ['pitch', 'duration']
+    kind = ['pitch', 'duration']
     root = 'data'
 
 
@@ -52,9 +51,9 @@ class BDLSTM:
     _predictions = 500
 
     def __init__(self, kind: str, mode: str):
-        kind = Constants.kinds.index(kind)
+        kind = Constants.kind.index(kind)
 
-        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM._load_data(Constants.kinds[kind])
+        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM._load_data(Constants.kind[kind])
 
         training_data_generator = BDLSTMGenerator(training_data,
                                                   BDLSTM._cfg[kind]['number_of_steps'],
@@ -79,11 +78,11 @@ class BDLSTM:
         model.add(Activation(activation='softmax'))
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-        checkpoint = ModelCheckpoint(filepath=os.path.join(Constants.root, Constants.kinds[kind] + '_{epoch:03d}.hdf5'),
+        checkpoint = ModelCheckpoint(filepath=os.path.join(Constants.root, Constants.kind[kind] + '_{epoch:03d}.hdf5'),
                                      monitor='val_loss',
                                      verbose=1,
                                      save_freq=int(1E9))
-        logger = CSVLogger(filename=os.path.join(Constants.root, Constants.kinds[kind] + '_log.csv'),
+        logger = CSVLogger(filename=os.path.join(Constants.root, Constants.kind[kind] + '_log.csv'),
                            separator=',',
                            append=False)
 
@@ -98,13 +97,13 @@ class BDLSTM:
                       validation_steps=val_steps,
                       callbacks=[checkpoint, logger])
 
-            model.save(os.path.join(Constants.root, Constants.kinds[kind] + '_model.hdf5'))
+            model.save(os.path.join(Constants.root, Constants.kind[kind] + '_model.hdf5'))
 
         if mode == 'test':
-            model = load_model(os.path.join(Constants.root, Constants.kinds[kind] + '_model.hdf5'))
+            model = load_model(os.path.join(Constants.root, Constants.kind[kind] + '_model.hdf5'))
 
             number_of_steps = 16
-            inception = np.load(os.path.join(Constants.root, Constants.kinds[kind] + '_training.npy')).tolist()[
+            inception = np.load(os.path.join(Constants.root, Constants.kind[kind] + '_training.npy')).tolist()[
                         :number_of_steps]
 
             sentence_ids = [map_direct[element] for element in inception]
@@ -130,7 +129,7 @@ class BDLSTM:
                 sentence.append(map_reverse[w])
 
             sentence = np.array(sentence, dtype=int)
-            np.save(os.path.join(Constants.root, Constants.kinds[kind] + '_output.npy'), sentence)
+            np.save(os.path.join(Constants.root, Constants.kind[kind] + '_output.npy'), sentence)
 
     @staticmethod
     def _clamp_01(x: float) -> float:
@@ -181,16 +180,16 @@ class BDLSTM:
         return training_data, validation_data, vocabulary_size, map_direct, map_reverse
 
 
-def main_bdlstm(train: bool = True, test: bool = False):
-    generate_input()
+def main_bdlstm(train: bool = True, test: bool = True):
+    # generate_input()
     if train:
-        for kind in Constants.kinds:
+        for kind in Constants.kind:
             if not os.path.exists(os.path.join(Constants.root, kind + '_model.hdf5')):
                 BDLSTM(kind=kind, mode='train')
     if test:
-        for kind in Constants.kinds:
+        for kind in Constants.kind:
             BDLSTM(kind=kind, mode='test')
 
 
 if __name__ == '__main__':
-    main_bdlstm()
+    main_bdlstm(False, True)
