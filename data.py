@@ -1,7 +1,7 @@
 from music21 import *
 
 
-def generate_input():
+def generate_input(ratio: float = 0.8):
     violin_parts = []
     for composition in corpus.search('bach', 'composer'):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
@@ -23,8 +23,16 @@ def generate_input():
         pitches.append('END')
         durations.append('END')
     assert len(pitches) == len(durations)
-    print(len(pitches))
-    with open('pitches.txt', 'wt') as file:
-        file.write(' '.join(pitches))
-    with open('durations.txt', 'wt') as file:
-        file.write(' '.join(durations))
+
+    length = len(pitches)
+    split_point = int(length * ratio)
+
+    with open('data/pitch_training.txt', 'wt') as file:
+        file.write(' '.join(pitches[:split_point]))
+    with open('data/pitch_validation.txt', 'wt') as file:
+        file.write(' '.join(pitches[split_point:]))
+
+    with open('data/duration_training.txt', 'wt') as file:
+        file.write(' '.join(durations[:split_point]))
+    with open('data/duration_validation.txt', 'wt') as file:
+        file.write(' '.join(durations[split_point:]))
