@@ -24,16 +24,16 @@ def generate_input(ratio: float = 0.8):
     pitches = []
     durations = []
     for part in violin_parts:
-        pitches.append('BEG')
-        durations.append('BEG')
+        # pitches.append('BEG')
+        # durations.append('BEG')
         for element in part.getElementsByClass(['Note', 'Rest']):
             durations.append(str(element.duration.quarterLength))
             if element.isNote:
                 pitches.append(str(element.nameWithOctave))
             if element.isRest:
                 pitches.append('RST')
-        pitches.append('END')
-        durations.append('END')
+        # pitches.append('END')
+        # durations.append('END')
     assert len(pitches) == len(durations)
 
     length = len(pitches)
