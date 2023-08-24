@@ -53,6 +53,7 @@ def generate_output():
     pth_pitch = 'data/pitch_output.txt'
     pth_duration = 'data/duration_output.txt'
     pth_midi = 'data/midi_output.mid'
+    pth_xml = 'data/xml_output.musicxml'
 
     with open(pth_pitch, 'rt') as file:
         pitches = file.read().split(' ')
@@ -63,10 +64,20 @@ def generate_output():
 
     composition = stream.Stream()
     for i in range(length):
+        try:
+            length = float(durations[i])
+        except ValueError:
+            length = 0
+        if length <= 0:
+            continue
+
         if pitches[i] == 'RST':
-            element = note.Rest(float(durations[i]))
+            element = note.Rest(length)
         else:
             element = note.Note(pitches[i])
-            element.duration.quarterLength = float(durations[i])
+            element.duration.quarterLength = length
         composition.append(element)
+    composition.makeMeasures(inPlace=True)
+    # composition.makeTies(inPlace=True)
     composition.write('midi', pth_midi)
+    composition.write('musicxml', pth_xml)
