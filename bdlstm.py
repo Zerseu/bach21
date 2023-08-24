@@ -182,16 +182,14 @@ class BDLSTM:
         return training_data, validation_data, vocabulary_size, map_direct, map_reverse
 
 
-def main_bdlstm(train: bool = True, test: bool = True):
+def main():
     generate_input()
-    if train:
-        for kind in BDLSTMConstants.kind:
-            if not os.path.exists(os.path.join(BDLSTMConstants.root, kind + '_model.hdf5')):
-                BDLSTM(kind=kind, mode='train')
-    if test:
-        for kind in BDLSTMConstants.kind:
-            BDLSTM(kind=kind, mode='test')
+    for kind in BDLSTMConstants.kind:
+        if not os.path.exists(os.path.join(BDLSTMConstants.root, kind + '_model.hdf5')):
+            BDLSTM(kind=kind, mode='train')
+    for kind in BDLSTMConstants.kind:
+        BDLSTM(kind=kind, mode='test')
 
 
 if __name__ == '__main__':
-    main_bdlstm()
+    main()
