@@ -35,7 +35,6 @@ def generate_input(ratio: float = 0.8):
         # pitches.append('END')
         # durations.append('END')
     assert len(pitches) == len(durations)
-
     length = len(pitches)
     split_point = int(length * ratio)
 
@@ -48,3 +47,26 @@ def generate_input(ratio: float = 0.8):
         file.write(' '.join(durations[:split_point]))
     with open(pth_duration_validation, 'wt') as file:
         file.write(' '.join(durations[split_point:]))
+
+
+def generate_output():
+    pth_pitch = 'data/pitch_output.txt'
+    pth_duration = 'data/duration_output.txt'
+    pth_midi = 'data/midi_output.mid'
+
+    with open(pth_pitch, 'rt') as file:
+        pitches = file.read().split(' ')
+    with open(pth_duration, 'rt') as file:
+        durations = file.read().split(' ')
+    assert len(pitches) == len(durations)
+    length = len(pitches)
+
+    composition = stream.Stream()
+    for i in range(length):
+        if pitches[i] == 'RST':
+            element = note.Rest(float(durations[i]))
+        else:
+            element = note.Note(pitches[i])
+            element.duration.quarterLength = float(durations[i])
+        composition.append(element)
+    composition.write('midi', pth_midi)

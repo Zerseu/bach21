@@ -10,7 +10,7 @@ from keras.models import load_model, Sequential
 from keras.utils import to_categorical
 
 from config import Config
-from data import generate_input
+from data import generate_input, generate_output
 
 SEED = 0
 random.seed(SEED)
@@ -49,7 +49,7 @@ class BDLSTMGenerator(object):
 
 class BDLSTM:
     _cfg = Config().config
-    _predictions = 1024
+    _predictions = 1000
 
     def __init__(self, kind: str, mode: str):
         kind = BDLSTMConstants.kind.index(kind)
@@ -188,7 +188,9 @@ def main():
         if not os.path.exists(os.path.join(BDLSTMConstants.root, kind + '_model.hdf5')):
             BDLSTM(kind=kind, mode='train')
     for kind in BDLSTMConstants.kind:
-        BDLSTM(kind=kind, mode='test')
+        if not os.path.exists(os.path.join(BDLSTMConstants.root, kind + '_output.txt')):
+            BDLSTM(kind=kind, mode='test')
+    generate_output()
 
 
 if __name__ == '__main__':
