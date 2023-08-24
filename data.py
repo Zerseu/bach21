@@ -1,7 +1,19 @@
+import os.path
+
 from music21 import *
 
 
 def generate_input(ratio: float = 0.8):
+    pth_pitch_training = 'data/pitch_training.txt'
+    pth_pitch_validation = 'data/pitch_validation.txt'
+
+    pth_duration_training = 'data/duration_training.txt'
+    pth_duration_validation = 'data/duration_validation.txt'
+
+    if os.path.exists(pth_pitch_training) and os.path.exists(pth_pitch_validation):
+        if os.path.exists(pth_duration_training) and os.path.exists(pth_duration_validation):
+            return
+
     violin_parts = []
     for composition in corpus.search('bach', 'composer'):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
@@ -27,12 +39,12 @@ def generate_input(ratio: float = 0.8):
     length = len(pitches)
     split_point = int(length * ratio)
 
-    with open('data/pitch_training.txt', 'wt') as file:
+    with open(pth_pitch_training, 'wt') as file:
         file.write(' '.join(pitches[:split_point]))
-    with open('data/pitch_validation.txt', 'wt') as file:
+    with open(pth_pitch_validation, 'wt') as file:
         file.write(' '.join(pitches[split_point:]))
 
-    with open('data/duration_training.txt', 'wt') as file:
+    with open(pth_duration_training, 'wt') as file:
         file.write(' '.join(durations[:split_point]))
-    with open('data/duration_validation.txt', 'wt') as file:
+    with open(pth_duration_validation, 'wt') as file:
         file.write(' '.join(durations[split_point:]))
