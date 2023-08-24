@@ -1,7 +1,7 @@
 from music21 import *
 
 
-def main():
+def generate_input():
     violin_parts = []
     for composition in corpus.search('bach', 'composer'):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
@@ -28,7 +28,3 @@ def main():
         file.write(' '.join(pitches))
     with open('durations.txt', 'wt') as file:
         file.write(' '.join(durations))
-
-
-if __name__ == '__main__':
-    main()
