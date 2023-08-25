@@ -3,7 +3,7 @@ import os.path
 from music21 import *
 
 
-def generate_input(ratio: float = 0.8):
+def generate_input(composer: str = 'bach', ratio: float = 0.8, ):
     pth_pitch_training = 'data/pitch_training.txt'
     pth_pitch_validation = 'data/pitch_validation.txt'
 
@@ -14,16 +14,17 @@ def generate_input(ratio: float = 0.8):
         if os.path.exists(pth_duration_training) and os.path.exists(pth_duration_validation):
             return
 
-    violin_parts = []
-    for composition in corpus.search('bach', 'composer'):
+    print('Generating input data...')
+    matches = []
+    for composition in corpus.search(composer, 'composer'):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
         for part in parts:
             best_name = part.getInstrument().bestName()
             if 'Violin' in best_name or 'Soprano' in best_name:
-                violin_parts.append(part)
+                matches.append(part)
     pitches = []
     durations = []
-    for part in violin_parts:
+    for part in matches:
         # pitches.append('BEG')
         # durations.append('BEG')
         for element in part.getElementsByClass(['Note', 'Rest']):
@@ -47,6 +48,7 @@ def generate_input(ratio: float = 0.8):
         file.write(' '.join(durations[:split_point]))
     with open(pth_duration_validation, 'wt') as file:
         file.write(' '.join(durations[split_point:]))
+    print('Done generating input data...')
 
 
 def generate_output():
@@ -55,6 +57,7 @@ def generate_output():
     pth_midi = 'data/midi_output.mid'
     pth_xml = 'data/xml_output.musicxml'
 
+    print('Generating output data...')
     with open(pth_pitch, 'rt') as file:
         pitches = file.read().split(' ')
     with open(pth_duration, 'rt') as file:
@@ -63,6 +66,8 @@ def generate_output():
     length = len(pitches)
 
     composition = stream.Stream()
+    composition.append(clef.TrebleClef())
+    composition.append(instrument.Violin())
     for i in range(length):
         try:
             length = float(durations[i])
@@ -81,3 +86,4 @@ def generate_output():
     # composition.makeTies(inPlace=True)
     composition.write('midi', pth_midi)
     composition.write('musicxml', pth_xml)
+    print('Done generating output data...')
