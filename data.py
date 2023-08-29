@@ -3,7 +3,7 @@ import os.path
 from music21 import *
 
 
-def generate_input(composer: str = 'bach', ratio: float = 0.8, ):
+def generate_input(composer: str = 'bach', ratio: float = 0.8):
     pth_pitch_training = 'data/pitch_training.txt'
     pth_pitch_validation = 'data/pitch_validation.txt'
 
