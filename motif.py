@@ -7,7 +7,7 @@ from music21 import pitch
 from data import generate_input
 
 
-def main(motif_length: int = 10):
+def query_any(motif_length: int = 10) -> [str]:
     generate_input()
 
     pitches = []
@@ -29,20 +29,36 @@ def main(motif_length: int = 10):
     sig_profile = np.load('data/stump_{0}.npy'.format(motif_length), allow_pickle=True)
     sig_motifs = stumpy.motifs(T=sig,
                                P=sig_profile[:, 0],
-                               min_neighbors=9,
+                               min_neighbors=5,
                                max_distance=0.0,
                                cutoff=0.0,
-                               max_matches=1000,
-                               max_motifs=1000)
+                               max_matches=10,
+                               max_motifs=10000)
 
+    motifs = []
     for m in sig_motifs[1]:
         motif_start = m[0]
         motif_ps = sig[motif_start:motif_start + motif_length]
         motif_ps = [pitch.Pitch(p) for p in motif_ps]
         motif_ps = [p.nameWithOctave for p in motif_ps]
-        motif_occ = np.count_nonzero(m != -1)
-        print(motif_ps, motif_occ)
+        motif_ps = ' '.join(motif_ps)
+        motifs.append(motif_ps)
+    return motifs
+
+
+def query_all():
+    bound_lower = 5
+    bound_upper = 16
+    motifs = []
+    for motif_length in range(bound_lower, bound_upper):
+        print('Examining motifs of length', motif_length)
+        motifs.append(query_any(motif_length))
+        if len(motifs) > 1:
+            for motif_sub in motifs[-2]:
+                for motif_sup in motifs[-1]:
+                    if motif_sub in motif_sup:
+                        print(motif_sub, 'in', motif_sup)
 
 
 if __name__ == "__main__":
-    main()
+    query_all()
