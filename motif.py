@@ -8,7 +8,7 @@ from music21 import pitch
 from data import generate_input
 
 
-def query_any(motif_length: int = 10) -> [str]:
+def query_any(motif_length: int = 10) -> set:
     generate_input()
 
     pitches = []
@@ -36,14 +36,14 @@ def query_any(motif_length: int = 10) -> [str]:
                                max_matches=10,
                                max_motifs=10000)
 
-    motifs = []
+    motifs = set()
     for m in sig_motifs[1]:
         motif_start = m[0]
         motif_ps = sig[motif_start:motif_start + motif_length]
         motif_ps = [pitch.Pitch(p) for p in motif_ps]
         motif_ps = [p.nameWithOctave for p in motif_ps]
         motif_ps = ' '.join(motif_ps)
-        motifs.append(motif_ps)
+        motifs.add(motif_ps)
     return motifs
 
 
