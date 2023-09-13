@@ -1,5 +1,6 @@
 import os.path
 
+import graphviz
 import numpy as np
 import stumpy
 from music21 import pitch
@@ -50,6 +51,7 @@ def query_all():
     bound_lower = 5
     bound_upper = 16
     motifs = []
+    g = graphviz.Digraph(name='motifs', directory='data', format='svg')
     for motif_length in range(bound_lower, bound_upper):
         print('Examining motifs of length', motif_length)
         motifs.append(query_any(motif_length))
@@ -57,7 +59,8 @@ def query_all():
             for motif_sub in motifs[-2]:
                 for motif_sup in motifs[-1]:
                     if motif_sub in motif_sup:
-                        print(motif_sub, 'in', motif_sup)
+                        g.edge(motif_sub, motif_sup)
+    g.view()
 
 
 if __name__ == "__main__":
