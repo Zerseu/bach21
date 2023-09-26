@@ -1,6 +1,6 @@
 import os.path
 
-import graphviz
+import igraph as ig
 import numpy as np
 import stumpy
 from music21 import pitch
@@ -50,18 +50,42 @@ def query_any(motif_length: int = 10) -> set:
 def query_all():
     bound_lower = 5
     bound_upper = 16
-    motifs = []
-    g = graphviz.Digraph(name='motifs', directory='data', format='svg')
-    for motif_length in range(bound_lower, bound_upper):
-        print('Examining motifs of length', motif_length)
-        motifs.append(query_any(motif_length))
-        if len(motifs) > 1:
-            for motif_sub in motifs[-2]:
-                for motif_sup in motifs[-1]:
+
+    if not os.path.exists('data/motifs.gml'):
+        motifs = []
+        for motif_length in range(bound_lower, bound_upper):
+            print('Examining motifs of length', motif_length)
+            motifs.append(list(query_any(motif_length)))
+
+        vertices = 0
+        offsets = []
+        tags = []
+        for motif_length in range(bound_lower, bound_upper):
+            offsets.append(vertices)
+            vertices += len(motifs[motif_length - bound_lower])
+            tags += motifs[motif_length - bound_lower]
+
+        edges = []
+        for motif_length in range(bound_lower + 1, bound_upper):
+            for idx_sub in range(len(motifs[motif_length - bound_lower - 1])):
+                motif_sub = motifs[motif_length - bound_lower - 1][idx_sub]
+                for idx_sup in range(len(motifs[motif_length - bound_lower])):
+                    motif_sup = motifs[motif_length - bound_lower][idx_sup]
                     if motif_sub in motif_sup:
-                        g.edge(motif_sub, motif_sup)
-    g.view()
+                        edges.append((offsets[motif_length - bound_lower - 1] + idx_sub, offsets[motif_length - bound_lower] + idx_sup))
+
+        g = ig.Graph(n=vertices, edges=edges, directed=True)
+        g.vs['tag'] = tags
+        g.save('data/motifs.gml')
+    g = ig.load('data/motifs.gml')
+    g.vs['label'] = g.vs['tag']
+
+    g_comp = g.connected_components(mode='weak')
+    g_comp = [c for c in g_comp if len(c) > 1]
+    g_comp.sort(key=len, reverse=True)
+    for idx in range(10):
+        ig.plot(g.subgraph(g_comp[idx]), target='motifs_{0}.png'.format(idx), bbox=(2048, 2048), margin=128)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     query_all()
