@@ -1,10 +1,10 @@
+import json
 import os.path
 
 import igraph as ig
-import numpy as np
 import regex as re
-import stumpy
 from music21 import pitch
+from tqdm import tqdm
 
 from data import generate_input
 
@@ -19,7 +19,17 @@ def __lps__(pat: [float]) -> [int]:
     return ret
 
 
-def kmp(pat: [float], sig: [float]) -> [int]:
+def __hsh__(sig: [float], sz: int) -> [float]:
+    ret = 0
+    for i in range(sz):
+        ret += sig[i]
+    ret = [ret]
+    for i in range(1, len(sig) - sz):
+        ret.append(ret[-1] - sig[i - 1] + sig[i + sz - 1])
+    return ret
+
+
+def __kmp__(pat: [float], sig: [float]) -> [int]:
     lps, ret, j = __lps__(pat), [], 0
     for i in range(len(sig)):
         while j > 0 and sig[i] != pat[j]:
@@ -33,44 +43,36 @@ def kmp(pat: [float], sig: [float]) -> [int]:
 
 
 def query_any(motif_length: int = 10) -> set:
-    generate_input()
+    if not os.path.exists('data/motifs_{0}.json'.format(motif_length)):
+        generate_input()
 
-    pitches = []
-    with open('data/pitch_training.txt', 'rt') as file:
-        pitches += file.read().split(' ')
-    with open('data/pitch_validation.txt', 'rt') as file:
-        pitches += file.read().split(' ')
+        pitches = []
+        with open('data/pitch_training.txt', 'rt') as file:
+            pitches += file.read().split(' ')
+        with open('data/pitch_validation.txt', 'rt') as file:
+            pitches += file.read().split(' ')
 
-    sig = []
-    for p in pitches:
-        if p != 'RST':
-            sig.append(pitch.Pitch(p).ps)
-    sig = np.array(sig, dtype=float)
-    print(sig)
+        sig = []
+        for p in pitches:
+            if p != 'RST':
+                sig.append(pitch.Pitch(p).ps)
 
-    if not os.path.exists('data/stump_{0}.npy'.format(motif_length)):
-        sig_profile = stumpy.stump(T_A=sig,
-                                   m=motif_length)
-        np.save('data/stump_{0}'.format(motif_length), sig_profile, allow_pickle=True)
-    sig_profile = np.load('data/stump_{0}.npy'.format(motif_length), allow_pickle=True)
-    sig_motifs = stumpy.motifs(T=sig,
-                               P=sig_profile[:, 0],
-                               min_neighbors=5,
-                               max_distance=0.0,
-                               cutoff=None,
-                               max_matches=10,
-                               max_motifs=1000)
+        motifs = set()
+        for motif_start in tqdm(range(len(sig) - motif_length)):
+            motif_ps = sig[motif_start:motif_start + motif_length]
+            motif_occ = len(__kmp__(motif_ps, sig))
+            if motif_occ >= 5:
+                motif_ps = [pitch.Pitch(p) for p in motif_ps]
+                motif_ps = [p.nameWithOctave for p in motif_ps]
+                motif_ps = ' '.join(motif_ps)
+                motifs.add(motif_ps)
 
-    motifs = set()
-    for m in sig_motifs[1]:
-        motif_start = m[0]
-        motif_ps = sig[motif_start:motif_start + motif_length]
-        print(kmp(motif_ps, sig))
-        motif_ps = [pitch.Pitch(p) for p in motif_ps]
-        motif_ps = [p.nameWithOctave for p in motif_ps]
-        motif_ps = ' '.join(motif_ps)
-        motifs.add(motif_ps)
-    return motifs
+        motifs = list(motifs)
+        with open('data/motifs_{0}.json'.format(motif_length), 'wt') as file:
+            json.dump(motifs, file)
+    with open('data/motifs_{0}.json'.format(motif_length), 'rt') as file:
+        motifs = json.load(file)
+    return set(motifs)
 
 
 def query_all():
@@ -91,8 +93,6 @@ def query_all():
         data = [pitch.Pitch(p) for p in data]
         data = [p.nameWithOctave for p in data]
         data = ' '.join(data)
-        with open('data.txt', 'wt') as file:
-            file.write(data)
 
         motifs = []
         for motif_length in range(bound_lower, bound_upper):
