@@ -2,6 +2,7 @@ import os.path
 
 import igraph as ig
 import numpy as np
+import regex as re
 import stumpy
 from music21 import pitch
 
@@ -32,9 +33,9 @@ def query_any(motif_length: int = 10) -> set:
                                P=sig_profile[:, 0],
                                min_neighbors=5,
                                max_distance=0.0,
-                               cutoff=0.0,
+                               cutoff=1E-3,
                                max_matches=10,
-                               max_motifs=10000)
+                               max_motifs=5000)
 
     motifs = set()
     for m in sig_motifs[1]:
@@ -52,6 +53,22 @@ def query_all():
     bound_upper = 16
 
     if not os.path.exists('data/motifs.gml'):
+        generate_input()
+        pitches = []
+        with open('data/pitch_training.txt', 'rt') as file:
+            pitches += file.read().split(' ')
+        with open('data/pitch_validation.txt', 'rt') as file:
+            pitches += file.read().split(' ')
+        data = []
+        for p in pitches:
+            if p != 'RST':
+                data.append(pitch.Pitch(p).ps)
+        data = [pitch.Pitch(p) for p in data]
+        data = [p.nameWithOctave for p in data]
+        data = ' '.join(data)
+        with open('data.txt', 'wt') as file:
+            file.write(data)
+
         motifs = []
         for motif_length in range(bound_lower, bound_upper):
             print('Examining motifs of length', motif_length)
@@ -59,11 +76,20 @@ def query_all():
 
         vertices = 0
         offsets = []
-        tags = []
+        labels = []
         for motif_length in range(bound_lower, bound_upper):
             offsets.append(vertices)
             vertices += len(motifs[motif_length - bound_lower])
-            tags += motifs[motif_length - bound_lower]
+            labels += motifs[motif_length - bound_lower]
+
+        for idx in range(len(labels)):
+            occ = len(re.findall(pattern=re.escape(pattern=labels[idx],
+                                                   special_only=True,
+                                                   literal_spaces=False),
+                                 string=data,
+                                 overlapped=True))
+            if occ == 1:
+                print(labels[idx])
 
         edges = []
         for motif_length in range(bound_lower + 1, bound_upper):
@@ -75,10 +101,9 @@ def query_all():
                         edges.append((offsets[motif_length - bound_lower - 1] + idx_sub, offsets[motif_length - bound_lower] + idx_sup))
 
         g = ig.Graph(n=vertices, edges=edges, directed=True)
-        g.vs['tag'] = tags
+        g.vs['label'] = labels
         g.save('data/motifs.gml')
     g = ig.load('data/motifs.gml')
-    g.vs['label'] = g.vs['tag']
 
     g_comp = g.connected_components(mode='weak')
     g_comp = [c for c in g_comp if len(c) > 1]
