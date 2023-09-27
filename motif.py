@@ -9,6 +9,29 @@ from music21 import pitch
 from data import generate_input
 
 
+def __lps__(pat: [float]) -> [int]:
+    ret = [0]
+    for i in range(1, len(pat)):
+        j = ret[i - 1]
+        while j > 0 and pat[j] != pat[i]:
+            j = ret[j - 1]
+        ret.append(j + 1 if pat[j] == pat[i] else j)
+    return ret
+
+
+def kmp(pat: [float], sig: [float]) -> [int]:
+    lps, ret, j = __lps__(pat), [], 0
+    for i in range(len(sig)):
+        while j > 0 and sig[i] != pat[j]:
+            j = lps[j - 1]
+        if sig[i] == pat[j]:
+            j += 1
+        if j == len(pat):
+            ret.append(i - (j - 1))
+            j = lps[j - 1]
+    return ret
+
+
 def query_any(motif_length: int = 10) -> set:
     generate_input()
 
@@ -23,6 +46,7 @@ def query_any(motif_length: int = 10) -> set:
         if p != 'RST':
             sig.append(pitch.Pitch(p).ps)
     sig = np.array(sig, dtype=float)
+    print(sig)
 
     if not os.path.exists('data/stump_{0}.npy'.format(motif_length)):
         sig_profile = stumpy.stump(T_A=sig,
@@ -33,14 +57,15 @@ def query_any(motif_length: int = 10) -> set:
                                P=sig_profile[:, 0],
                                min_neighbors=5,
                                max_distance=0.0,
-                               cutoff=1E-3,
+                               cutoff=None,
                                max_matches=10,
-                               max_motifs=5000)
+                               max_motifs=1000)
 
     motifs = set()
     for m in sig_motifs[1]:
         motif_start = m[0]
         motif_ps = sig[motif_start:motif_start + motif_length]
+        print(kmp(motif_ps, sig))
         motif_ps = [pitch.Pitch(p) for p in motif_ps]
         motif_ps = [p.nameWithOctave for p in motif_ps]
         motif_ps = ' '.join(motif_ps)
