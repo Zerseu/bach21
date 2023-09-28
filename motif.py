@@ -61,7 +61,7 @@ def query_any(motif_length: int = 10) -> set:
         for motif_start in tqdm(range(len(sig) - motif_length)):
             motif_ps = sig[motif_start:motif_start + motif_length]
             motif_occ = len(__kmp__(motif_ps, sig))
-            if motif_occ >= 5:
+            if motif_occ > 4:
                 motif_ps = [pitch.Pitch(p) for p in motif_ps]
                 motif_ps = [p.nameWithOctave for p in motif_ps]
                 motif_ps = ' '.join(motif_ps)
@@ -76,8 +76,8 @@ def query_any(motif_length: int = 10) -> set:
 
 
 def query_all():
-    bound_lower = 5
-    bound_upper = 16
+    bound_lower = 4
+    bound_upper = 25
 
     if not os.path.exists('data/motifs.gml'):
         generate_input()
@@ -113,8 +113,7 @@ def query_all():
                                                    literal_spaces=False),
                                  string=data,
                                  overlapped=True))
-            if occ == 1:
-                print(labels[idx])
+            assert occ > 4
 
         edges = []
         for motif_length in range(bound_lower + 1, bound_upper):
