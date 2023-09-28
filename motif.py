@@ -133,7 +133,7 @@ def query_all():
     g_comp = [c for c in g_comp if len(c) > 1]
     g_comp.sort(key=len, reverse=True)
     for idx in range(10):
-        ig.plot(g.subgraph(g_comp[idx]), target='motifs_{0}.png'.format(idx), bbox=(2048, 2048), margin=128)
+        ig.plot(g.subgraph(g_comp[idx]), target='motifs_{0}.png'.format(idx), bbox=(4096, 4096), margin=256)
 
 
 if __name__ == '__main__':
