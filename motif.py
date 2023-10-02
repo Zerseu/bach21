@@ -9,7 +9,7 @@ from tqdm import tqdm
 from data import generate_input
 
 
-def query_any(motif_length: int = 10) -> set:
+def query_any(motif_length: int = 10) -> {}:
     if not os.path.exists('data/motifs_{0}.json'.format(motif_length)):
         generate_input()
 
@@ -25,24 +25,23 @@ def query_any(motif_length: int = 10) -> set:
                 sig_raw.append(pitch.Pitch(p).ps)
         sig_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in sig_raw])
 
-        motifs = set()
+        motifs = {}
         for motif_start in tqdm(range(len(sig_raw) - motif_length)):
             motif_raw = sig_raw[motif_start:motif_start + motif_length]
             motif_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in motif_raw])
-            motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
-                                                         special_only=True,
-                                                         literal_spaces=False),
-                                       string=sig_str,
-                                       overlapped=True))
-            if motif_occ > 4:
-                motifs.add(motif_str + ' ' + str(motif_occ))
+            if motif_str not in motifs:
+                motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
+                                                             special_only=True,
+                                                             literal_spaces=False),
+                                           string=sig_str,
+                                           overlapped=True))
+                if motif_occ > 4:
+                    motifs[motif_str] = motif_occ
 
-        motifs = list(motifs)
         with open('data/motifs_{0}.json'.format(motif_length), 'wt') as file:
-            json.dump(motifs, file)
+            json.dump(motifs, file, indent=4, sort_keys=True)
     with open('data/motifs_{0}.json'.format(motif_length), 'rt') as file:
-        motifs = json.load(file)
-    return set(motifs)
+        return json.load(file)
 
 
 def query_all():
@@ -57,29 +56,28 @@ def query_all():
         with open('data/pitch_validation.txt', 'rt') as file:
             pitches += file.read().split(' ')
 
-        motifs = []
+        motifs = {}
         for motif_length in range(bound_lower, bound_upper):
             print('Examining motifs of length', motif_length)
-            motifs.append(list(query_any(motif_length)))
+            motifs[motif_length] = query_any(motif_length)
 
         vertices = 0
-        offsets = []
         labels = []
+        occurrences = []
+        lengths = []
         for motif_length in range(bound_lower, bound_upper):
-            offsets.append(vertices)
-            vertices += len(motifs[motif_length - bound_lower])
-            labels += motifs[motif_length - bound_lower]
+            vertices += len(motifs[motif_length])
+            for motif in motifs[motif_length]:
+                labels.append(motif)
+                occurrences.append(motifs[motif_length][motif])
+                lengths.append(motif_length)
 
         edges = []
-        for motif_length in range(bound_lower + 1, bound_upper):
-            for idx_sub in range(len(motifs[motif_length - bound_lower - 1])):
-                motif_sub = ' '.join(motifs[motif_length - bound_lower - 1][idx_sub].split(' ')[:-1])
-                # motif_sub_occ = int(motifs[motif_length - bound_lower - 1][idx_sub].split(' ')[-1])
-                for idx_sup in range(len(motifs[motif_length - bound_lower])):
-                    motif_sup = ' '.join(motifs[motif_length - bound_lower][idx_sup].split(' ')[:-1])
-                    # motif_sup_occ = int(motifs[motif_length - bound_lower][idx_sup].split(' ')[-1])
-                    if motif_sub in motif_sup:
-                        edges.append((offsets[motif_length - bound_lower - 1] + idx_sub, offsets[motif_length - bound_lower] + idx_sup))
+        for motif_sub_idx in range(0, vertices - 1):
+            for motif_sup_idx in range(motif_sub_idx + 1, vertices):
+                if lengths[motif_sub_idx] + 1 == lengths[motif_sup_idx]:
+                    if labels[motif_sub_idx] in labels[motif_sup_idx]:
+                        edges.append((motif_sub_idx, motif_sup_idx))
 
         g = ig.Graph(n=vertices, edges=edges, directed=True)
         g.vs['label'] = labels
