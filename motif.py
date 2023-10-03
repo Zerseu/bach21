@@ -1,22 +1,25 @@
 import json
 import os.path
+import sys
 
 import igraph as ig
 import regex as re
 from music21 import pitch
 from tqdm import tqdm
 
-from data import generate_input
+from data import get_dir, generate_input
 
 
-def query_any(motif_length: int = 10) -> {}:
-    if not os.path.exists('data/motifs_{0}.json'.format(motif_length)):
-        generate_input()
+def query_any(composer: str, motif_length: int) -> {}:
+    crt_dir = get_dir(composer)
+
+    if not os.path.exists(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length))):
+        generate_input(composer)
 
         pitches = []
-        with open('data/pitch_training.txt', 'rt') as file:
+        with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
             pitches += file.read().split(' ')
-        with open('data/pitch_validation.txt', 'rt') as file:
+        with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
             pitches += file.read().split(' ')
 
         sig_raw = []
@@ -38,28 +41,30 @@ def query_any(motif_length: int = 10) -> {}:
                 if motif_occ > 4:
                     motifs[motif_str] = motif_occ
 
-        with open('data/motifs_{0}.json'.format(motif_length), 'wt') as file:
+        with open(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
-    with open('data/motifs_{0}.json'.format(motif_length), 'rt') as file:
+    with open(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length)), 'rt') as file:
         return json.load(file)
 
 
-def query_all():
+def query_all(composer: str):
+    crt_dir = get_dir(composer)
+
     bound_lower = 4
     bound_upper = 25
 
-    if not os.path.exists('data/motifs.gml'):
-        generate_input()
+    if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
+        generate_input(composer)
         pitches = []
-        with open('data/pitch_training.txt', 'rt') as file:
+        with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
             pitches += file.read().split(' ')
-        with open('data/pitch_validation.txt', 'rt') as file:
+        with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
             pitches += file.read().split(' ')
 
         motifs = {}
         for motif_length in range(bound_lower, bound_upper):
             print('Examining motifs of length', motif_length)
-            motifs[motif_length] = query_any(motif_length)
+            motifs[motif_length] = query_any(composer, motif_length)
 
         vertices = 0
         labels = []
@@ -81,18 +86,18 @@ def query_all():
 
         g = ig.Graph(n=vertices, edges=edges, directed=True)
         g.vs['label'] = labels
-        g.save('data/motifs.gml')
-    g = ig.load('data/motifs.gml')
+        g.save(os.path.join(crt_dir, 'motifs.gml'))
+    g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
 
     g_comp = g.connected_components(mode='weak')
     g_comp = [c for c in g_comp if len(c) > 1]
     g_comp.sort(key=len, reverse=True)
     for idx in range(10):
         ig.plot(obj=g.subgraph(g_comp[idx]),
-                target='motifs_{0}.png'.format(idx),
+                target=os.path.join(crt_dir, 'motifs_{0}.png'.format(idx)),
                 bbox=(2000, 2000),
                 margin=100)
 
 
 if __name__ == '__main__':
-    query_all()
+    query_all(sys.argv[1])

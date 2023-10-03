@@ -3,12 +3,21 @@ import os.path
 from music21 import *
 
 
-def generate_input(composer: str = 'bach', ratio: float = 0.8):
-    pth_pitch_training = 'data/pitch_training.txt'
-    pth_pitch_validation = 'data/pitch_validation.txt'
+def get_dir(composer: str) -> str:
+    crt_dir = os.path.join('data', composer)
+    if not os.path.exists(crt_dir):
+        os.makedirs(crt_dir)
+    return crt_dir
 
-    pth_duration_training = 'data/duration_training.txt'
-    pth_duration_validation = 'data/duration_validation.txt'
+
+def generate_input(composer: str, ratio: float = 0.8):
+    crt_dir = get_dir(composer)
+
+    pth_pitch_training = os.path.join(crt_dir, 'pitch_training.txt')
+    pth_pitch_validation = os.path.join(crt_dir, 'pitch_validation.txt')
+
+    pth_duration_training = os.path.join(crt_dir, 'duration_training.txt')
+    pth_duration_validation = os.path.join(crt_dir, 'duration_validation.txt')
 
     if os.path.exists(pth_pitch_training) and os.path.exists(pth_pitch_validation):
         if os.path.exists(pth_duration_training) and os.path.exists(pth_duration_validation):
@@ -51,11 +60,13 @@ def generate_input(composer: str = 'bach', ratio: float = 0.8):
     print('Done generating input data...')
 
 
-def generate_output():
-    pth_pitch = 'data/pitch_output.txt'
-    pth_duration = 'data/duration_output.txt'
-    pth_midi = 'data/midi_output.mid'
-    pth_xml = 'data/xml_output.musicxml'
+def generate_output(composer: str):
+    crt_dir = get_dir(composer)
+
+    pth_pitch = os.path.join(crt_dir, 'pitch_output.txt')
+    pth_duration = os.path.join(crt_dir, 'duration_output.txt')
+    pth_midi = os.path.join(crt_dir, 'midi_output.mid')
+    pth_xml = os.path.join(crt_dir, 'xml_output.musicxml')
 
     print('Generating output data...')
     with open(pth_pitch, 'rt') as file:

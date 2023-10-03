@@ -1,6 +1,7 @@
 import collections
 import os
 import random
+import sys
 
 import numpy as np
 import tensorflow as tf
@@ -10,7 +11,7 @@ from keras.models import load_model, Sequential
 from keras.utils import to_categorical
 
 from config import Config
-from data import generate_input, generate_output
+from data import get_dir, generate_input, generate_output
 
 seed = 0
 random.seed(seed)
@@ -18,7 +19,6 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 
 cfg = Config().config
-root = 'data'
 predictions = 1000
 
 
@@ -46,8 +46,10 @@ class BDLSTMGenerator(object):
 
 
 class BDLSTM:
-    def __init__(self, kind: str, mode: str):
-        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM._load_data(kind)
+    def __init__(self, composer: str, kind: str, mode: str):
+        crt_dir = get_dir(composer)
+
+        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM.__load_data__(composer, kind)
 
         training_data_generator = BDLSTMGenerator(training_data,
                                                   cfg[kind]['number_of_steps'],
@@ -72,15 +74,15 @@ class BDLSTM:
         model.add(Activation(activation='softmax'))
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-        checkpoint = ModelCheckpoint(filepath=os.path.join(root, kind + '_{epoch:03d}.keras'),
+        checkpoint = ModelCheckpoint(filepath=os.path.join(crt_dir, kind + '_{epoch:03d}.keras'),
                                      monitor='val_loss',
                                      verbose=1,
                                      save_freq=int(1E9))
-        logger = CSVLogger(filename=os.path.join(root, kind + '_log.csv'),
+        logger = CSVLogger(filename=os.path.join(crt_dir, kind + '_log.csv'),
                            separator=',',
                            append=False)
 
-        if mode == 'train' and not os.path.exists(os.path.join(root, kind + '_model.keras')):
+        if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.keras')):
             trn_steps = len(training_data) // (cfg[kind]['batch_size'] * cfg[kind]['number_of_steps'])
             val_steps = len(validation_data) // (cfg[kind]['batch_size'] * cfg[kind]['number_of_steps'])
 
@@ -91,16 +93,16 @@ class BDLSTM:
                       validation_steps=val_steps,
                       callbacks=[checkpoint, logger])
 
-            model.save(os.path.join(root, kind + '_model.keras'))
+            model.save(os.path.join(crt_dir, kind + '_model.keras'))
 
-        if mode == 'test' and not os.path.exists(os.path.join(root, kind + '_output.txt')):
-            model = load_model(os.path.join(root, kind + '_model.keras'))
+        if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
+            model = load_model(os.path.join(crt_dir, kind + '_model.keras'))
 
             number_of_steps = 0
             for key in cfg:
                 number_of_steps = max(number_of_steps, cfg[key]['number_of_steps'])
 
-            with open(os.path.join(root, kind + '_training.txt'), 'rt') as file:
+            with open(os.path.join(crt_dir, kind + '_training.txt'), 'rt') as file:
                 inception = file.read().split(' ')[:number_of_steps]
 
             sentence_ids = [map_direct[element] for element in inception]
@@ -115,7 +117,7 @@ class BDLSTM:
                 o = np.argsort(prediction[:, cfg[kind]['number_of_steps'] - 1, :]).flatten()[::-1]
 
                 eps = 1E-3
-                rnd = BDLSTM._clamp_01(random.random() + eps)
+                rnd = BDLSTM.__clamp_01__(random.random() + eps)
                 base = cfg[kind]['temperature']
                 idx = 0
                 while not (1.0 / pow(base, idx + 1) < rnd <= 1.0 / pow(base, idx)) and idx < vocabulary_size - 1:
@@ -126,11 +128,11 @@ class BDLSTM:
                 sentence.append(map_reverse[w])
 
             sentence = ' '.join(sentence)
-            with open(os.path.join(root, kind + '_output.txt'), 'wt') as file:
+            with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
 
     @staticmethod
-    def _clamp_01(x: float) -> float:
+    def __clamp_01__(x: float) -> float:
         if x < 0:
             return 0
         if x > 1:
@@ -138,11 +140,11 @@ class BDLSTM:
         return x
 
     @staticmethod
-    def _gen_eps() -> float:
+    def __gen_eps__() -> float:
         return random.random() * 1E-3
 
     @staticmethod
-    def _read_words(training_path: str = None, validation_path: str = None) -> [str]:
+    def __read_words__(training_path: str = None, validation_path: str = None) -> [str]:
         all_words = []
         if training_path is not None:
             with open(training_path, 'rt') as file:
@@ -153,8 +155,8 @@ class BDLSTM:
         return all_words
 
     @staticmethod
-    def _build_vocabulary(training_path: str, validation_path: str) -> dict:
-        data = BDLSTM._read_words(training_path, validation_path)
+    def __build_vocabulary__(training_path: str, validation_path: str) -> dict:
+        data = BDLSTM.__read_words__(training_path, validation_path)
         counter = collections.Counter(data)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         elements, _ = list(zip(*count_pairs))
@@ -162,30 +164,31 @@ class BDLSTM:
         return map_direct
 
     @staticmethod
-    def _file_to_ids(file: str, map_direct: dict) -> [int]:
-        data = BDLSTM._read_words(file)
+    def __file_to_ids__(file: str, map_direct: dict) -> [int]:
+        data = BDLSTM.__read_words__(file)
         return [map_direct[element] for element in data]
 
     @staticmethod
-    def _load_data(kind: str) -> ([int], [int], int, dict, dict):
-        training_path = os.path.join(root, kind + '_training.txt')
-        validation_path = os.path.join(root, kind + '_validation.txt')
-        map_direct = BDLSTM._build_vocabulary(training_path, validation_path)
-        training_data = BDLSTM._file_to_ids(training_path, map_direct)
-        validation_data = BDLSTM._file_to_ids(validation_path, map_direct)
+    def __load_data__(composer: str, kind: str) -> ([int], [int], int, dict, dict):
+        crt_dir = get_dir(composer)
+        training_path = os.path.join(crt_dir, kind + '_training.txt')
+        validation_path = os.path.join(crt_dir, kind + '_validation.txt')
+        map_direct = BDLSTM.__build_vocabulary__(training_path, validation_path)
+        training_data = BDLSTM.__file_to_ids__(training_path, map_direct)
+        validation_data = BDLSTM.__file_to_ids__(validation_path, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
         return training_data, validation_data, vocabulary_size, map_direct, map_reverse
 
 
-def main():
-    generate_input()
+def main(composer: str):
+    generate_input(composer)
     for kind in cfg:
-        BDLSTM(kind=kind, mode='train')
+        BDLSTM(composer=composer, kind=kind, mode='train')
     for kind in cfg:
-        BDLSTM(kind=kind, mode='test')
-    generate_output()
+        BDLSTM(composer=composer, kind=kind, mode='test')
+    generate_output(composer)
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1])
