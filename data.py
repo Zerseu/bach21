@@ -4,8 +4,10 @@ from music21 import *
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
-    assert len(instruments) > 0
-    crt_dir = os.path.join('data', composer, instruments[0])
+    if len(instruments) == 0:
+        crt_dir = os.path.join('data', composer, 'all')
+    else:
+        crt_dir = os.path.join('data', composer, instruments[0])
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
@@ -29,23 +31,22 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     for composition in corpus.search(composer, 'composer'):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
         for part in parts:
-            best_name = part.getInstrument().bestName()
-            for inst in instruments:
-                if inst.lower() in best_name.lower():
-                    matches.append(part)
+            if len(instruments) == 0:
+                matches.append(part)
+            else:
+                best_name = part.getInstrument().bestName()
+                for inst in instruments:
+                    if inst.lower() in best_name.lower():
+                        matches.append(part)
     pitches = []
     durations = []
     for part in matches:
-        # pitches.append('BEG')
-        # durations.append('BEG')
         for element in part.getElementsByClass(['Note', 'Rest']):
             durations.append(str(element.duration.quarterLength))
             if element.isNote:
                 pitches.append(str(element.nameWithOctave))
             if element.isRest:
                 pitches.append('RST')
-        # pitches.append('END')
-        # durations.append('END')
     assert len(pitches) == len(durations)
     length = len(pitches)
     split_point = int(length * ratio)

@@ -1,19 +1,20 @@
 import json
+import multiprocessing
 import os.path
 import sys
 
 import igraph as ig
 import regex as re
 from music21 import pitch
-from tqdm import tqdm
 
 from data import get_dir, generate_input
 
 
-def query_any(composer: str, instruments: [str], motif_length: int) -> {}:
+def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):
+    print('Examining motifs of length', motif_length)
     crt_dir = get_dir(composer, instruments)
 
-    if not os.path.exists(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length))):
+    if not os.path.exists(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length))):
         generate_input(composer, instruments)
 
         pitches = []
@@ -29,7 +30,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> {}:
         sig_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in sig_raw])
 
         motifs = {}
-        for motif_start in tqdm(range(len(sig_raw) - motif_length)):
+        for motif_start in range(len(sig_raw) - motif_length):
             motif_raw = sig_raw[motif_start:motif_start + motif_length]
             motif_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in motif_raw])
             if motif_str not in motifs:
@@ -38,13 +39,13 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> {}:
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ > 4:
+                if motif_occ > 1:
                     motifs[motif_str] = motif_occ
 
-        with open(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length)), 'wt') as file:
+        with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
-    with open(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length)), 'rt') as file:
-        return json.load(file)
+    with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'rt') as file:
+        return motif_length, json.load(file)
 
 
 def query_all(composer: str, instruments: [str]):
@@ -62,9 +63,10 @@ def query_all(composer: str, instruments: [str]):
             pitches += file.read().split(' ')
 
         motifs = {}
-        for motif_length in range(bound_lower, bound_upper):
-            print('Examining motifs of length', motif_length)
-            motifs[motif_length] = query_any(composer, instruments, motif_length)
+        with multiprocessing.Pool(4) as pool:
+            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower, bound_upper)]
+            for result in pool.starmap(query_any, args):
+                motifs[result[0]] = result[1]
 
         vertices = 0
         labels = []
@@ -92,9 +94,9 @@ def query_all(composer: str, instruments: [str]):
     g_comp = g.connected_components(mode='weak')
     g_comp = [c for c in g_comp if len(c) > 1]
     g_comp.sort(key=len, reverse=True)
-    for idx in range(10):
+    for idx in range(min(10, len(g_comp))):
         ig.plot(obj=g.subgraph(g_comp[idx]),
-                target=os.path.join(crt_dir, 'motifs_{0}.png'.format(idx)),
+                target=os.path.join(crt_dir, 'cluster_{:02d}.png'.format(idx)),
                 bbox=(2000, 2000),
                 margin=100)
 
