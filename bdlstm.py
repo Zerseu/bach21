@@ -46,10 +46,10 @@ class BDLSTMGenerator(object):
 
 
 class BDLSTM:
-    def __init__(self, composer: str, kind: str, mode: str):
-        crt_dir = get_dir(composer)
+    def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
+        crt_dir = get_dir(composer, instruments)
 
-        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM.__load_data__(composer, kind)
+        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM.__load_data__(composer, instruments, kind)
 
         training_data_generator = BDLSTMGenerator(training_data,
                                                   cfg[kind]['number_of_steps'],
@@ -169,8 +169,8 @@ class BDLSTM:
         return [map_direct[element] for element in data]
 
     @staticmethod
-    def __load_data__(composer: str, kind: str) -> ([int], [int], int, dict, dict):
-        crt_dir = get_dir(composer)
+    def __load_data__(composer: str, instruments: [str], kind: str) -> ([int], [int], int, dict, dict):
+        crt_dir = get_dir(composer, instruments)
         training_path = os.path.join(crt_dir, kind + '_training.txt')
         validation_path = os.path.join(crt_dir, kind + '_validation.txt')
         map_direct = BDLSTM.__build_vocabulary__(training_path, validation_path)
@@ -181,14 +181,14 @@ class BDLSTM:
         return training_data, validation_data, vocabulary_size, map_direct, map_reverse
 
 
-def main(composer: str):
-    generate_input(composer)
+def main(composer: str, instruments: [str]):
+    generate_input(composer, instruments)
     for kind in cfg:
-        BDLSTM(composer=composer, kind=kind, mode='train')
+        BDLSTM(composer=composer, instruments=instruments, kind=kind, mode='train')
     for kind in cfg:
-        BDLSTM(composer=composer, kind=kind, mode='test')
-    generate_output(composer)
+        BDLSTM(composer=composer, instruments=instruments, kind=kind, mode='test')
+    generate_output(composer, instruments)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2:])

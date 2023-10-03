@@ -3,15 +3,16 @@ import os.path
 from music21 import *
 
 
-def get_dir(composer: str) -> str:
-    crt_dir = os.path.join('data', composer)
+def get_dir(composer: str, instruments: [str]) -> str:
+    assert len(instruments) > 0
+    crt_dir = os.path.join('data', composer, instruments[0])
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
 
 
-def generate_input(composer: str, ratio: float = 0.8):
-    crt_dir = get_dir(composer)
+def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
+    crt_dir = get_dir(composer, instruments)
 
     pth_pitch_training = os.path.join(crt_dir, 'pitch_training.txt')
     pth_pitch_validation = os.path.join(crt_dir, 'pitch_validation.txt')
@@ -29,8 +30,9 @@ def generate_input(composer: str, ratio: float = 0.8):
         parts = instrument.partitionByInstrument(corpus.parse(composition))
         for part in parts:
             best_name = part.getInstrument().bestName()
-            if 'Violin' in best_name or 'Soprano' in best_name:
-                matches.append(part)
+            for inst in instruments:
+                if inst.lower() in best_name.lower():
+                    matches.append(part)
     pitches = []
     durations = []
     for part in matches:
@@ -60,8 +62,8 @@ def generate_input(composer: str, ratio: float = 0.8):
     print('Done generating input data...')
 
 
-def generate_output(composer: str):
-    crt_dir = get_dir(composer)
+def generate_output(composer: str, instruments: [str]):
+    crt_dir = get_dir(composer, instruments)
 
     pth_pitch = os.path.join(crt_dir, 'pitch_output.txt')
     pth_duration = os.path.join(crt_dir, 'duration_output.txt')

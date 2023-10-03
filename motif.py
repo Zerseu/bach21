@@ -10,11 +10,11 @@ from tqdm import tqdm
 from data import get_dir, generate_input
 
 
-def query_any(composer: str, motif_length: int) -> {}:
-    crt_dir = get_dir(composer)
+def query_any(composer: str, instruments: [str], motif_length: int) -> {}:
+    crt_dir = get_dir(composer, instruments)
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs_{0}.json'.format(motif_length))):
-        generate_input(composer)
+        generate_input(composer, instruments)
 
         pitches = []
         with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
@@ -47,14 +47,14 @@ def query_any(composer: str, motif_length: int) -> {}:
         return json.load(file)
 
 
-def query_all(composer: str):
-    crt_dir = get_dir(composer)
+def query_all(composer: str, instruments: [str]):
+    crt_dir = get_dir(composer, instruments)
 
     bound_lower = 4
     bound_upper = 25
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
-        generate_input(composer)
+        generate_input(composer, instruments)
         pitches = []
         with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
             pitches += file.read().split(' ')
@@ -64,7 +64,7 @@ def query_all(composer: str):
         motifs = {}
         for motif_length in range(bound_lower, bound_upper):
             print('Examining motifs of length', motif_length)
-            motifs[motif_length] = query_any(composer, motif_length)
+            motifs[motif_length] = query_any(composer, instruments, motif_length)
 
         vertices = 0
         labels = []
@@ -100,4 +100,4 @@ def query_all(composer: str):
 
 
 if __name__ == '__main__':
-    query_all(sys.argv[1])
+    query_all(sys.argv[1], sys.argv[2:])
