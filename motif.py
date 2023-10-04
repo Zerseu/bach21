@@ -39,7 +39,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ > 1:
+                if motif_occ >= 4:
                     motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -62,12 +62,15 @@ def query_all(composer: str, instruments: [str]):
         with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
             pitches += file.read().split(' ')
 
+        print('Running parallel motif discovery from length', bound_lower, 'to', bound_upper - 1)
         motifs = {}
         with multiprocessing.Pool(4) as pool:
             args = [(composer, instruments, motif_length) for motif_length in range(bound_lower, bound_upper)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
+        print('Motif discovery complete...')
 
+        print('Computing motif relationship graph...')
         vertices = 0
         labels = []
         occurrences = []
@@ -85,20 +88,23 @@ def query_all(composer: str, instruments: [str]):
                 if lengths[motif_sub_idx] + 1 == lengths[motif_sup_idx]:
                     if labels[motif_sub_idx] in labels[motif_sup_idx]:
                         edges.append((motif_sub_idx, motif_sup_idx))
+        print('Graph computation complete...')
 
         g = ig.Graph(n=vertices, edges=edges, directed=True)
         g.vs['label'] = labels
         g.save(os.path.join(crt_dir, 'motifs.gml'))
     g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
 
+    print('Plotting motif relationship top-10 connected components...')
     g_comp = g.connected_components(mode='weak')
     g_comp = [c for c in g_comp if len(c) > 1]
     g_comp.sort(key=len, reverse=True)
     for idx in range(min(10, len(g_comp))):
         ig.plot(obj=g.subgraph(g_comp[idx]),
-                target=os.path.join(crt_dir, 'cluster_{:02d}.png'.format(idx)),
+                target=os.path.join(crt_dir, 'graph_{:02d}.png'.format(idx)),
                 bbox=(2000, 2000),
                 margin=100)
+    print('Component plot complete...')
 
 
 if __name__ == '__main__':
