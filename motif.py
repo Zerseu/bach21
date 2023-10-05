@@ -35,11 +35,11 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
             motif_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in motif_raw])
             if motif_str not in motifs:
                 motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
-                                                             special_only=True,
+                                                             special_only=False,
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ >= 4:
+                if motif_occ > 1:
                     motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -90,7 +90,9 @@ def query_all(composer: str, instruments: [str]):
                         edges.append((motif_sub_idx, motif_sup_idx))
         print('Graph computation complete...')
 
-        g = ig.Graph(n=vertices, edges=edges, directed=True)
+        g = ig.Graph(n=vertices,
+                     edges=edges,
+                     directed=False)
         g.vs['label'] = labels
         g.save(os.path.join(crt_dir, 'motifs.gml'))
     g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
