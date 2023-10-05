@@ -13,10 +13,8 @@ def get_dir(composer: str, instruments: [str]) -> str:
     return crt_dir
 
 
-def parse_midi_file(file: str):
-    parts = instrument.partitionByInstrument(converter.parse(file, format='midi'))
-    for part in parts:
-        print(part.getInstrument().bestName())
+def parse_midi(file: str):
+    converter.parse(file, format='midi').show()
 
 
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
