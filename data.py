@@ -1,6 +1,10 @@
 import os.path
+from typing import Optional
 
 from music21 import *
+
+InternalCorpus: bool = True
+ExternalCorpus: Optional[str] = 'C:/Users/cc_pl/Downloads/Classical Archives - The Greats (MIDI)'
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
@@ -11,10 +15,6 @@ def get_dir(composer: str, instruments: [str]) -> str:
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
-
-
-def parse_midi(file: str):
-    converter.parse(file, format='midi').show()
 
 
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
@@ -32,20 +32,51 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
 
     print('Generating input data...')
     matches = []
-    for composition in corpus.search(composer, 'composer'):
-        parts = instrument.partitionByInstrument(corpus.parse(composition))
-        for part in parts:
-            if len(instruments) == 0:
-                matches.append(part)
-            else:
-                best_name = part.getInstrument().bestName()
-                for inst in instruments:
-                    if inst.lower() in best_name.lower():
+
+    if InternalCorpus is True:
+        print('Parsing internal corpus...')
+        print('music21')
+        for composition in corpus.search(composer, 'composer'):
+            parts = instrument.partitionByInstrument(corpus.parse(composition))
+            for part in parts:
+                if len(instruments) == 0:
+                    matches.append(part)
+                else:
+                    best_name = part.getInstrument().bestName()
+                    ok = False
+                    for inst in instruments:
+                        if inst.lower() in best_name.lower():
+                            ok = True
+                            break
+                    if ok:
                         matches.append(part)
+        print('Done parsing internal corpus...')
+
+    if ExternalCorpus is not None:
+        print('Parsing external corpus...')
+        print(ExternalCorpus)
+        for root, dirs, files in os.walk(ExternalCorpus):
+            if len(files) > 0:
+                for pth in sorted(files):
+                    pth = os.path.join(root, pth)
+                    if pth.endswith('.mid'):
+                        if composer.lower() in pth.lower():
+                            ok = False
+                            for inst in instruments:
+                                if inst.lower() in pth.lower():
+                                    ok = True
+                                    break
+                            if ok:
+                                print('Parsing', pth)
+                                parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi'))
+                                for part in parts:
+                                    matches.append(part)
+        print('Done parsing external corpus...')
+
     pitches = []
     durations = []
     for part in matches:
-        for element in part.getElementsByClass(['Note', 'Rest']):
+        for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
             durations.append(str(element.duration.quarterLength))
             if element.isNote:
                 pitches.append(str(element.nameWithOctave))

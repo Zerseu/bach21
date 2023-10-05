@@ -39,7 +39,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ > 1:
+                if motif_occ >= 4:
                     motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
