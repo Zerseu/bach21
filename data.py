@@ -127,14 +127,15 @@ def generate_output(composer: str, instruments: [str]):
         if length <= 0:
             continue
 
-        if pitches[i] == 'RST':
+        if pitches[i] == 'SIG':
+            continue
+        elif pitches[i] == 'RST':
             element = note.Rest(length)
         else:
             element = note.Note(pitches[i])
             element.duration.quarterLength = length
         composition.append(element)
     composition.makeMeasures(inPlace=True)
-    # composition.makeTies(inPlace=True)
     composition.write('midi', pth_midi)
     composition.write('musicxml', pth_xml)
     print('Done generating output data...')

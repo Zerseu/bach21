@@ -25,7 +25,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 
         sig_raw = []
         for p in pitches:
-            if p != 'RST' and p != 'SIG':
+            if p != 'SIG' and p != 'RST':
                 sig_raw.append(pitch.Pitch(p).ps)
         sig_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in sig_raw])
 
