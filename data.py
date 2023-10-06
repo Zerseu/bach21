@@ -4,7 +4,7 @@ from typing import Optional
 from music21 import *
 
 InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = 'C:/Users/cc_pl/Downloads/Classical Archives - The Greats (MIDI)'
+ExternalCorpus: Optional[str] = 'C:/midi'
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
@@ -82,6 +82,8 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                 pitches.append(str(element.nameWithOctave))
             if element.isRest:
                 pitches.append('RST')
+        pitches.append('SIG')
+        durations.append('SIG')
     assert len(pitches) == len(durations)
     length = len(pitches)
     split_point = int(length * ratio)
