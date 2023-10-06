@@ -82,8 +82,8 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                 pitches.append(str(element.nameWithOctave))
             if element.isRest:
                 pitches.append('RST')
-        pitches.append('SIG')
         durations.append('SIG')
+        pitches.append('SIG')
     assert len(pitches) == len(durations)
     length = len(pitches)
     split_point = int(length * ratio)
