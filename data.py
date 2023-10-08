@@ -2,6 +2,7 @@ import os.path
 from typing import Optional
 
 from music21 import *
+from tqdm import tqdm
 
 InternalCorpus: bool = True
 ExternalCorpus: Optional[str] = 'C:/midi'
@@ -15,6 +16,23 @@ def get_dir(composer: str, instruments: [str]) -> str:
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
+
+
+def lcs(a: [float], b: [float]) -> int:
+    m = len(a)
+    n = len(b)
+    aux = [[0 for _ in range(n + 1)] for _ in range(m + 1)]
+    ret = 0
+    for i in range(m + 1):
+        for j in range(n + 1):
+            if i == 0 or j == 0:
+                aux[i][j] = 0
+            elif a[i - 1] == b[j - 1]:
+                aux[i][j] = aux[i - 1][j - 1] + 1
+                ret = max(ret, aux[i][j])
+            else:
+                aux[i][j] = 0
+    return ret
 
 
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
@@ -73,6 +91,46 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                                     matches.append(part)
         print('Done parsing external corpus...')
 
+    print('Excluding duplicate parts...')
+    pitches = []
+    for part in matches:
+        pitches.append([])
+        for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
+            if element.isNote:
+                pitches[-1].append(element.pitch.ps)
+            if element.isRest:
+                pitches[-1].append(0)
+
+    done = False
+    while not done:
+        done = True
+        for idx in range(len(matches) - 1):
+            if len(pitches[idx]) < len(pitches[idx + 1]):
+                aux = pitches[idx]
+                pitches[idx] = pitches[idx + 1]
+                pitches[idx + 1] = aux
+                aux = matches[idx]
+                matches[idx] = matches[idx + 1]
+                matches[idx + 1] = aux
+                done = False
+
+    invalid = 0
+    valid = [True]
+    for idx in tqdm(range(1, len(matches))):
+        ok = len(pitches[idx]) > 0
+        if ok:
+            for idy in range(idx):
+                if valid[idy]:
+                    if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.8:
+                        ok = False
+                        break
+        if not ok:
+            invalid += 1
+        valid.append(ok)
+    matches = [matches[idx] for idx in range(len(matches)) if valid[idx]]
+    print('Excluded', invalid, 'parts!')
+    print('Done excluding duplicate parts...')
+
     pitches = []
     durations = []
     for part in matches:
@@ -85,6 +143,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         durations.append('SIG')
         pitches.append('SIG')
     assert len(pitches) == len(durations)
+
     length = len(pitches)
     split_point = int(length * ratio)
 
