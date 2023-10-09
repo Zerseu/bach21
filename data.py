@@ -1,11 +1,12 @@
 import os.path
+import random
 from typing import Optional
 
 from music21 import *
 from tqdm import tqdm
 
 InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = 'C:/midi'
+ExternalCorpus: Optional[str] = None
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
@@ -130,6 +131,8 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     matches = [matches[idx] for idx in range(len(matches)) if valid[idx]]
     print('Excluded', invalid, 'parts!')
     print('Done excluding duplicate parts...')
+
+    random.shuffle(matches)
 
     pitches = []
     durations = []
