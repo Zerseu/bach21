@@ -39,7 +39,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ >= 4:
+                if motif_occ > 1:
                     motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -51,8 +51,8 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 def query_all(composer: str, instruments: [str]):
     crt_dir = get_dir(composer, instruments)
 
-    bound_lower = 4
-    bound_upper = 25
+    bound_lower_inc = 8
+    bound_upper_exc = 25
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
         generate_input(composer, instruments)
@@ -62,10 +62,10 @@ def query_all(composer: str, instruments: [str]):
         with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
             pitches += file.read().split(' ')
 
-        print('Running parallel motif discovery from length', bound_lower, 'to', bound_upper - 1)
+        print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_exc - 1)
         motifs = {}
         with multiprocessing.Pool(4) as pool:
-            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower, bound_upper)]
+            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower_inc, bound_upper_exc)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
         print('Motif discovery complete...')
@@ -75,7 +75,7 @@ def query_all(composer: str, instruments: [str]):
         labels = []
         occurrences = []
         lengths = []
-        for motif_length in range(bound_lower, bound_upper):
+        for motif_length in range(bound_lower_inc, bound_upper_exc):
             vertices += len(motifs[motif_length])
             for motif in motifs[motif_length]:
                 labels.append(motif)
@@ -92,8 +92,10 @@ def query_all(composer: str, instruments: [str]):
 
         g = ig.Graph(n=vertices,
                      edges=edges,
-                     directed=False)
+                     directed=True)
         g.vs['label'] = labels
+        g.vs['occurrence'] = occurrences
+        g.vs['length'] = lengths
         g.save(os.path.join(crt_dir, 'motifs.gml'))
     g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
 
@@ -103,9 +105,14 @@ def query_all(composer: str, instruments: [str]):
     g_comp.sort(key=len, reverse=True)
     for idx in range(min(10, len(g_comp))):
         ig.plot(obj=g.subgraph(g_comp[idx]),
-                target=os.path.join(crt_dir, 'graph_{:02d}.png'.format(idx)),
-                bbox=(2000, 2000),
-                margin=100)
+                target=os.path.join(crt_dir, 'graph_{:02d}.svg'.format(idx)),
+                palette=ig.GradientPalette('green', 'red'),
+                vertex_size=25,
+                vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['occurrence'],
+                                                      out_range=(0, 255),
+                                                      clamp=True))),
+                bbox=(2 ** 13, 2 ** 13),
+                margin=2 ** 7)
     print('Component plot complete...')
 
 

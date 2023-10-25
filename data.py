@@ -94,9 +94,12 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
 
     print('Excluding duplicate parts...')
     pitches = []
+    durations = []
     for part in matches:
         pitches.append([])
+        durations.append([])
         for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
+            durations[-1].append(element.duration.quarterLength)
             if element.isNote:
                 pitches[-1].append(element.pitch.ps)
             if element.isRest:
@@ -110,15 +113,28 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                 aux = pitches[idx]
                 pitches[idx] = pitches[idx + 1]
                 pitches[idx + 1] = aux
+                aux = durations[idx]
+                durations[idx] = durations[idx + 1]
+                durations[idx + 1] = aux
                 aux = matches[idx]
                 matches[idx] = matches[idx + 1]
                 matches[idx + 1] = aux
                 done = False
 
+    durations_valid = []
+    for idx in range(9):
+        dur = 4 / 2 ** idx
+        dur_dot = dur + dur / 2
+        durations_valid.append(dur)
+        durations_valid.append(dur_dot)
+
     invalid = 0
     valid = [True]
     for idx in tqdm(range(1, len(matches))):
-        ok = len(pitches[idx]) > 0
+        ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
+        ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.2
+        ok = ok and sum(d not in durations_valid for d in durations[idx]) == 0
+
         if ok:
             for idy in range(idx):
                 if valid[idy]:
