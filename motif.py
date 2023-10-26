@@ -108,7 +108,7 @@ def query_all(composer: str, instruments: [str]):
                 target=os.path.join(crt_dir, 'graph_{:02d}.svg'.format(idx)),
                 palette=ig.GradientPalette('green', 'red'),
                 vertex_size=25,
-                vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['occurrence'],
+                vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['length'],
                                                       out_range=(0, 255),
                                                       clamp=True))),
                 bbox=(2 ** 13, 2 ** 13),
