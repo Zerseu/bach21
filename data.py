@@ -121,24 +121,16 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                 matches[idx + 1] = aux
                 done = False
 
-    durations_valid = []
-    for idx in range(9):
-        dur = 4 / 2 ** idx
-        dur_dot = dur + dur / 2
-        durations_valid.append(dur)
-        durations_valid.append(dur_dot)
-
     invalid = 0
     valid = [True]
     for idx in tqdm(range(1, len(matches))):
         ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
-        ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.2
-        ok = ok and sum(d not in durations_valid for d in durations[idx]) == 0
+        ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.5
 
         if ok:
             for idy in range(idx):
                 if valid[idy]:
-                    if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.8:
+                    if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.5:
                         ok = False
                         break
         if not ok:
