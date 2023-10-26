@@ -6,7 +6,7 @@ from music21 import *
 from tqdm import tqdm
 
 InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = None
+ExternalCorpus: Optional[str] = "C:\\midi"
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
