@@ -6,6 +6,7 @@ import sys
 import igraph as ig
 import regex as re
 from music21 import pitch
+from tqdm import tqdm
 
 from data import get_dir, generate_input
 
@@ -103,9 +104,12 @@ def query_all(composer: str, instruments: [str]):
     g_comp = g.connected_components(mode='weak')
     g_comp = [c for c in g_comp if len(c) > 1]
     g_comp.sort(key=len, reverse=True)
-    for idx in range(min(10, len(g_comp))):
-        ig.plot(obj=g.subgraph(g_comp[idx]),
-                target=os.path.join(crt_dir, 'graph_{:02d}.svg'.format(idx)),
+    for idx in tqdm(range(min(10, len(g_comp)))):
+        conn_comp = g.subgraph(g_comp[idx])
+        conn_comp.save(os.path.join(crt_dir, 'layout_{:02d}.gml'.format(idx)))
+
+        ig.plot(obj=conn_comp,
+                target=os.path.join(crt_dir, 'layout_{:02d}.svg'.format(idx)),
                 palette=ig.GradientPalette('green', 'red'),
                 vertex_size=25,
                 vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['length'],
@@ -113,6 +117,10 @@ def query_all(composer: str, instruments: [str]):
                                                       clamp=True))),
                 bbox=(2 ** 13, 2 ** 13),
                 margin=2 ** 7)
+
+        conn_comp_lout = conn_comp.layout('auto')
+        with open(os.path.join(crt_dir, 'layout_{:02d}.json'.format(idx)), 'wt') as file:
+            json.dump(conn_comp_lout.coords, file, indent=4, sort_keys=False)
     print('Component plot complete...')
 
 
