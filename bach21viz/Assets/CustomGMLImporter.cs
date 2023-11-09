@@ -1,5 +1,7 @@
-using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using GraphX.Common.Models;
+using QuikGraph;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Assertions;
@@ -22,48 +24,38 @@ public static class CustomGMLImporter
                 }
             };
 
-            var gml = new Graph(gmlPath);
-            Debug.Log(gml.Directed);
-            Debug.Log(gml.Nodes.Count);
-            Debug.Log(gml.Edges.Count);
+            var gmlGraph = new Graph(gmlPath);
+            Debug.Log(gmlGraph.IsDirected);
+            Debug.Log(gmlGraph.VertexCount);
+            Debug.Log(gmlGraph.EdgeCount);
         }
     }
 }
 
-public readonly struct Node
+public sealed class Vertex : VertexBase
 {
-    public readonly int Id;
-    public readonly string Label;
-    public readonly int Occurrence;
-    public readonly int Length;
-
-    public Node(int id, string label, int occurrence, int length)
+    public Vertex(int id, string label, int occurrence, int length)
     {
-        Id = id;
+        ID = id;
         Label = label;
         Occurrence = occurrence;
         Length = length;
     }
+
+    public string Label { get; }
+    public int Length { get; }
+    public int Occurrence { get; }
 }
 
-public readonly struct Edge
+public sealed class Edge : EdgeBase<Vertex>
 {
-    public readonly int Source;
-    public readonly int Target;
-
-    public Edge(int source, int target)
+    public Edge(Vertex source, Vertex target) : base(source, target)
     {
-        Source = source;
-        Target = target;
     }
 }
 
-public sealed class Graph
+public sealed class Graph : BidirectionalGraph<Vertex, Edge>
 {
-    public readonly bool Directed;
-    public readonly List<Edge> Edges = new();
-    public readonly List<Node> Nodes = new();
-
     public Graph(string gmlPath)
     {
         var gmlContent = File.ReadAllLines(gmlPath);
@@ -76,7 +68,7 @@ public sealed class Graph
         gmlIndex++;
         var tokensDirected = gmlContent[gmlIndex].Trim().Split();
         Assert.IsTrue(tokensDirected[0] == "directed");
-        Directed = int.Parse(tokensDirected[1]) != 0;
+        var isDirected = int.Parse(tokensDirected[1]) != 0;
         gmlIndex++;
 
         while (gmlContent[gmlIndex].Trim() == "node")
@@ -102,7 +94,7 @@ public sealed class Graph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            Nodes.Add(new Node(id, label, occurrence, length));
+            AddVertex(new Vertex(id, label, occurrence, length));
         }
 
         while (gmlContent[gmlIndex].Trim() == "edge")
@@ -120,7 +112,7 @@ public sealed class Graph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            Edges.Add(new Edge(source, target));
+            AddEdge(new Edge(Vertices.First(v => v.ID == source), Vertices.First(v => v.ID == target)));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
