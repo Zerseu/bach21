@@ -1,14 +1,11 @@
-using System.Collections.Generic;
-using System.IO;
-using System.Threading;
-using GraphX.Common.Enums;
-using GraphX.Common.Models;
-using GraphX.Logic.Algorithms.LayoutAlgorithms;
-using GraphX.Logic.Models;
-using QuikGraph;
+using Microsoft.Msagl.Core.Geometry.Curves;
+using Microsoft.Msagl.Core.Layout;
+using Microsoft.Msagl.Layout.MDS;
+using Microsoft.Msagl.Miscellaneous;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Assertions;
+using P = Microsoft.Msagl.Core.Geometry.Point;
+
 
 public static class CustomGMLImporter
 {
@@ -28,27 +25,43 @@ public static class CustomGMLImporter
                 }
             };
 
+            /*
             var graph = new Graph(path);
             Debug.Log(graph.IsDirected);
             Debug.Log(graph.VertexCount);
             Debug.Log(graph.EdgeCount);
-
-            var logic = new Logic(graph);
-            logic.DefaultLayoutAlgorithm = LayoutAlgorithmTypeEnum.KK;
-            logic.DefaultLayoutAlgorithmParams =
-                logic.AlgorithmFactory.CreateLayoutParameters(LayoutAlgorithmTypeEnum.KK);
-            ((KKLayoutParameters)logic.DefaultLayoutAlgorithmParams).MaxIterations = 100;
-            logic.DefaultOverlapRemovalAlgorithm = OverlapRemovalAlgorithmTypeEnum.FSA;
-            logic.DefaultOverlapRemovalAlgorithmParams.HorizontalGap = 50;
-            logic.DefaultOverlapRemovalAlgorithmParams.VerticalGap = 50;
-            logic.DefaultEdgeRoutingAlgorithm = EdgeRoutingAlgorithmTypeEnum.SimpleER;
-            logic.AsyncAlgorithmCompute = false;
-            var layout = logic.Compute(CancellationToken.None);
-            Debug.Log(layout);
+            */
         }
+    }
+
+    internal static GeometryGraph CreateAndLayoutGraph()
+    {
+        double w = 30;
+        double h = 20;
+        var graph = new GeometryGraph();
+        var a = new Node(new Ellipse(w, h, new P()), "a");
+        var b = new Node(CurveFactory.CreateRectangle(w, h, new P()), "b");
+        var c = new Node(CurveFactory.CreateRectangle(w, h, new P()), "c");
+        var d = new Node(CurveFactory.CreateRectangle(w, h, new P()), "d");
+
+        graph.Nodes.Add(a);
+        graph.Nodes.Add(b);
+        graph.Nodes.Add(c);
+        graph.Nodes.Add(d);
+        var e = new Edge(a, b) { Length = 10 };
+        graph.Edges.Add(e);
+        graph.Edges.Add(new Edge(b, c) { Length = 3 });
+        graph.Edges.Add(new Edge(b, d) { Length = 4 });
+
+        //graph.Save("c:\\tmp\\saved.msagl");
+        var settings = new MdsLayoutSettings();
+        LayoutHelpers.CalculateLayout(graph, settings, null);
+
+        return graph;
     }
 }
 
+/*
 public sealed class Vertex : VertexBase
 {
     public Vertex(int id, string label, int occurrence, int length)
@@ -145,3 +158,4 @@ public sealed class Logic : GXLogicCore<Vertex, Edge, BidirectionalGraph<Vertex,
     {
     }
 }
+*/
