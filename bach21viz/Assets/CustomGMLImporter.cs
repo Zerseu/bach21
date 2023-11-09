@@ -1,6 +1,10 @@
+using System.Collections.Generic;
 using System.IO;
-using System.Linq;
+using System.Threading;
+using GraphX.Common.Enums;
 using GraphX.Common.Models;
+using GraphX.Logic.Algorithms.LayoutAlgorithms;
+using GraphX.Logic.Models;
 using QuikGraph;
 using UnityEditor;
 using UnityEngine;
@@ -11,10 +15,10 @@ public static class CustomGMLImporter
     [MenuItem("Assets/Import *.GML")]
     private static void Import()
     {
-        var gmlPath = EditorUtility.OpenFilePanel("Graph Selector", Application.dataPath, "gml");
-        if (!string.IsNullOrEmpty(gmlPath))
+        var path = EditorUtility.OpenFilePanel("Graph Selector", Application.dataPath, "gml");
+        if (!string.IsNullOrEmpty(path))
         {
-            var gmlRoot = new GameObject("GML Root")
+            var root = new GameObject("GML Root")
             {
                 transform =
                 {
@@ -24,10 +28,23 @@ public static class CustomGMLImporter
                 }
             };
 
-            var gmlGraph = new Graph(gmlPath);
-            Debug.Log(gmlGraph.IsDirected);
-            Debug.Log(gmlGraph.VertexCount);
-            Debug.Log(gmlGraph.EdgeCount);
+            var graph = new Graph(path);
+            Debug.Log(graph.IsDirected);
+            Debug.Log(graph.VertexCount);
+            Debug.Log(graph.EdgeCount);
+
+            var logic = new Logic(graph);
+            logic.DefaultLayoutAlgorithm = LayoutAlgorithmTypeEnum.KK;
+            logic.DefaultLayoutAlgorithmParams =
+                logic.AlgorithmFactory.CreateLayoutParameters(LayoutAlgorithmTypeEnum.KK);
+            ((KKLayoutParameters)logic.DefaultLayoutAlgorithmParams).MaxIterations = 100;
+            logic.DefaultOverlapRemovalAlgorithm = OverlapRemovalAlgorithmTypeEnum.FSA;
+            logic.DefaultOverlapRemovalAlgorithmParams.HorizontalGap = 50;
+            logic.DefaultOverlapRemovalAlgorithmParams.VerticalGap = 50;
+            logic.DefaultEdgeRoutingAlgorithm = EdgeRoutingAlgorithmTypeEnum.SimpleER;
+            logic.AsyncAlgorithmCompute = false;
+            var layout = logic.Compute(CancellationToken.None);
+            Debug.Log(layout);
         }
     }
 }
@@ -71,6 +88,7 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
         var isDirected = int.Parse(tokensDirected[1]) != 0;
         gmlIndex++;
 
+        var vertices = new Dictionary<int, Vertex>();
         while (gmlContent[gmlIndex].Trim() == "node")
         {
             gmlIndex++;
@@ -94,7 +112,9 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            AddVertex(new Vertex(id, label, occurrence, length));
+            var vertex = new Vertex(id, label, occurrence, length);
+            vertices.Add(id, vertex);
+            AddVertex(vertex);
         }
 
         while (gmlContent[gmlIndex].Trim() == "edge")
@@ -112,9 +132,16 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            AddEdge(new Edge(Vertices.First(v => v.ID == source), Vertices.First(v => v.ID == target)));
+            AddEdge(new Edge(vertices[source], vertices[target]));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
+    }
+}
+
+public sealed class Logic : GXLogicCore<Vertex, Edge, BidirectionalGraph<Vertex, Edge>>
+{
+    public Logic(Graph graph) : base(graph)
+    {
     }
 }
