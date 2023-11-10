@@ -1,11 +1,13 @@
+using System.Collections.Generic;
+using System.IO;
+using Microsoft.Msagl.Core.Geometry;
 using Microsoft.Msagl.Core.Geometry.Curves;
 using Microsoft.Msagl.Core.Layout;
 using Microsoft.Msagl.Layout.MDS;
 using Microsoft.Msagl.Miscellaneous;
 using UnityEditor;
 using UnityEngine;
-using P = Microsoft.Msagl.Core.Geometry.Point;
-
+using UnityEngine.Assertions;
 
 public static class CustomGMLImporter
 {
@@ -25,68 +27,76 @@ public static class CustomGMLImporter
                 }
             };
 
-            /*
-            var graph = new Graph(path);
+            var graph = new MyGraph(path);
             Debug.Log(graph.IsDirected);
-            Debug.Log(graph.VertexCount);
-            Debug.Log(graph.EdgeCount);
-            */
+            Debug.Log(graph.Nodes.Count);
+            Debug.Log(graph.Edges.Count);
+
+            Create();
         }
     }
 
-    internal static GeometryGraph CreateAndLayoutGraph()
+    private static GeometryGraph Create()
     {
-        double w = 30;
-        double h = 20;
-        var graph = new GeometryGraph();
-        var a = new Node(new Ellipse(w, h, new P()), "a");
-        var b = new Node(CurveFactory.CreateRectangle(w, h, new P()), "b");
-        var c = new Node(CurveFactory.CreateRectangle(w, h, new P()), "c");
-        var d = new Node(CurveFactory.CreateRectangle(w, h, new P()), "d");
+        const double r = 10;
+        const double l = 100;
 
+        var graph = new GeometryGraph();
+        var a = new Node(CurveFactory.CreateCircle(r, new Point()), "a");
+        var b = new Node(CurveFactory.CreateCircle(r, new Point()), "b");
+        var c = new Node(CurveFactory.CreateCircle(r, new Point()), "c");
+        var d = new Node(CurveFactory.CreateCircle(r, new Point()), "d");
         graph.Nodes.Add(a);
         graph.Nodes.Add(b);
         graph.Nodes.Add(c);
         graph.Nodes.Add(d);
-        var e = new Edge(a, b) { Length = 10 };
-        graph.Edges.Add(e);
-        graph.Edges.Add(new Edge(b, c) { Length = 3 });
-        graph.Edges.Add(new Edge(b, d) { Length = 4 });
 
-        //graph.Save("c:\\tmp\\saved.msagl");
+        graph.Edges.Add(new Edge(a, b) { Length = l });
+        graph.Edges.Add(new Edge(b, c) { Length = l });
+        graph.Edges.Add(new Edge(b, d) { Length = l });
+
         var settings = new MdsLayoutSettings();
         LayoutHelpers.CalculateLayout(graph, settings, null);
-
         return graph;
     }
 }
 
-/*
-public sealed class Vertex : VertexBase
+public sealed class MyNode
 {
-    public Vertex(int id, string label, int occurrence, int length)
+    public MyNode(int id, string label, int occurrence, int length)
     {
-        ID = id;
+        Id = id;
         Label = label;
         Occurrence = occurrence;
         Length = length;
     }
+
+    public int Id { get; }
 
     public string Label { get; }
     public int Length { get; }
     public int Occurrence { get; }
 }
 
-public sealed class Edge : EdgeBase<Vertex>
+public sealed class MyEdge
 {
-    public Edge(Vertex source, Vertex target) : base(source, target)
+    public MyEdge(MyNode source, MyNode target)
     {
+        Source = source;
+        Target = target;
     }
+
+    public MyNode Source { get; }
+    public MyNode Target { get; }
 }
 
-public sealed class Graph : BidirectionalGraph<Vertex, Edge>
+public sealed class MyGraph
 {
-    public Graph(string gmlPath)
+    public readonly List<MyEdge> Edges = new();
+    public readonly bool IsDirected = false;
+    public readonly List<MyNode> Nodes = new();
+
+    public MyGraph(string gmlPath)
     {
         var gmlContent = File.ReadAllLines(gmlPath);
 
@@ -101,7 +111,7 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
         var isDirected = int.Parse(tokensDirected[1]) != 0;
         gmlIndex++;
 
-        var vertices = new Dictionary<int, Vertex>();
+        var nodes = new Dictionary<int, MyNode>();
         while (gmlContent[gmlIndex].Trim() == "node")
         {
             gmlIndex++;
@@ -125,9 +135,9 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            var vertex = new Vertex(id, label, occurrence, length);
-            vertices.Add(id, vertex);
-            AddVertex(vertex);
+            var vertex = new MyNode(id, label, occurrence, length);
+            nodes.Add(id, vertex);
+            Nodes.Add(vertex);
         }
 
         while (gmlContent[gmlIndex].Trim() == "edge")
@@ -145,17 +155,9 @@ public sealed class Graph : BidirectionalGraph<Vertex, Edge>
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            AddEdge(new Edge(vertices[source], vertices[target]));
+            Edges.Add(new MyEdge(nodes[source], nodes[target]));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
     }
 }
-
-public sealed class Logic : GXLogicCore<Vertex, Edge, BidirectionalGraph<Vertex, Edge>>
-{
-    public Logic(Graph graph) : base(graph)
-    {
-    }
-}
-*/
