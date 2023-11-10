@@ -4,7 +4,7 @@ using System.IO;
 using Microsoft.Msagl.Core.Geometry;
 using Microsoft.Msagl.Core.Geometry.Curves;
 using Microsoft.Msagl.Core.Layout;
-using Microsoft.Msagl.Layout.MDS;
+using Microsoft.Msagl.Layout.Layered;
 using Microsoft.Msagl.Miscellaneous;
 using UnityEditor;
 using UnityEngine;
@@ -29,11 +29,15 @@ public static class CustomGMLImporter
             };
 
             var graph = new MyGraph(path);
-            Debug.Log(graph.IsDirected);
-            Debug.Log(graph.Nodes.Count);
-            Debug.Log(graph.Edges.Count);
-            var geoGraph = graph.Layout;
-            Debug.Log(geoGraph.Nodes[0].Center);
+            foreach (var node in graph.Layout.Nodes)
+            {
+                var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                sphere.transform.parent = root.transform;
+                sphere.transform.localPosition =
+                    new Vector3((float)(node.Center.X / 10.0), 0, (float)(node.Center.Y / 10.0));
+                sphere.transform.localRotation = Quaternion.identity;
+                sphere.transform.localScale = Vector3.one;
+            }
         }
     }
 }
@@ -142,6 +146,6 @@ public sealed class MyGraph
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
-        LayoutHelpers.CalculateLayout(Layout, new MdsLayoutSettings(), null);
+        LayoutHelpers.CalculateLayout(Layout, new SugiyamaLayoutSettings(), null);
     }
 }
