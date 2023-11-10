@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.Msagl.Core.Geometry;
@@ -14,7 +15,7 @@ public static class CustomGMLImporter
     [MenuItem("Assets/Import *.GML")]
     private static void Import()
     {
-        var path = EditorUtility.OpenFilePanel("Graph Selector", Application.dataPath, "gml");
+        var path = EditorUtility.OpenFilePanel("Layout Selector", Application.dataPath, "gml");
         if (!string.IsNullOrEmpty(path))
         {
             var root = new GameObject("GML Root")
@@ -31,7 +32,7 @@ public static class CustomGMLImporter
             Debug.Log(graph.IsDirected);
             Debug.Log(graph.Nodes.Count);
             Debug.Log(graph.Edges.Count);
-            var geoGraph = graph.ToGeometryGraph();
+            var geoGraph = graph.Layout;
             Debug.Log(geoGraph.Nodes[0].Center);
         }
     }
@@ -68,8 +69,12 @@ public sealed class MyEdge
 
 public sealed class MyGraph
 {
+    public const float NodeRadius = 1f;
+    public const float EdgeLength = 1f;
     public readonly List<MyEdge> Edges = new();
     public readonly bool IsDirected;
+    public readonly GeometryGraph Layout = new();
+    public readonly Dictionary<int, Tuple<Node, MyNode>> Map = new();
     public readonly List<MyNode> Nodes = new();
 
     public MyGraph(string gmlPath)
@@ -87,7 +92,6 @@ public sealed class MyGraph
         IsDirected = int.Parse(tokensDirected[1]) != 0;
         gmlIndex++;
 
-        var nodes = new Dictionary<int, MyNode>();
         while (gmlContent[gmlIndex].Trim() == "node")
         {
             gmlIndex++;
@@ -111,9 +115,11 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            var node = new MyNode(id, label, occurrence, length);
-            nodes.Add(id, node);
-            Nodes.Add(node);
+            var node = new Node(CurveFactory.CreateCircle(NodeRadius, new Point()), id);
+            var myNode = new MyNode(id, label, occurrence, length);
+            Map.Add(id, new Tuple<Node, MyNode>(node, myNode));
+            Layout.Nodes.Add(node);
+            Nodes.Add(myNode);
         }
 
         while (gmlContent[gmlIndex].Trim() == "edge")
@@ -131,35 +137,11 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            Edges.Add(new MyEdge(nodes[source], nodes[target]));
+            Layout.Edges.Add(new Edge(Map[source].Item1, Map[target].Item1) { Length = EdgeLength });
+            Edges.Add(new MyEdge(Map[source].Item2, Map[target].Item2));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
-    }
-
-    public GeometryGraph ToGeometryGraph()
-    {
-        const double r = 1;
-        const double l = 1;
-
-        var result = new GeometryGraph();
-
-        var nodes = new Dictionary<int, Node>();
-        foreach (var nd in Nodes)
-        {
-            var node = new Node(CurveFactory.CreateCircle(r, new Point()), nd.Id);
-            nodes.Add(nd.Id, node);
-            result.Nodes.Add(node);
-        }
-
-        foreach (var ed in Edges)
-        {
-            var edge = new Edge(nodes[ed.Source.Id], nodes[ed.Target.Id]) { Length = l };
-            result.Edges.Add(edge);
-        }
-
-        var settings = new MdsLayoutSettings();
-        LayoutHelpers.CalculateLayout(result, settings, null);
-        return result;
+        LayoutHelpers.CalculateLayout(Layout, new MdsLayoutSettings(), null);
     }
 }
