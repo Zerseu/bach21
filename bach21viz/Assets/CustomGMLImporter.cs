@@ -29,20 +29,36 @@ public static class CustomGMLImporter
             };
 
             var graph = new MyGraph(path);
+            var map = new Dictionary<int, GameObject>();
+
             foreach (var node in graph.Layout.Nodes)
             {
-                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-
-                go.transform.parent = root.transform;
-                go.transform.localPosition =
+                var goNode = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                goNode.name = "Node";
+                goNode.transform.parent = root.transform;
+                goNode.transform.localPosition =
                     new Vector3((float)(node.Center.X / 10.0),
                         graph.Map[(int)node.UserData].Item2.Length,
                         (float)(node.Center.Y / 10.0));
-                go.transform.localRotation = Quaternion.identity;
-                go.transform.localScale = Vector3.one;
+                goNode.transform.localRotation = Quaternion.identity;
+                goNode.transform.localScale = Vector3.one;
+                goNode.GetComponent<MeshRenderer>().sharedMaterial.color = Color.green;
+                map.Add((int)node.UserData, goNode);
+            }
 
-                var renderer = go.GetComponent<MeshRenderer>();
-                renderer.sharedMaterial.color = Color.green;
+            foreach (var edge in graph.Layout.Edges)
+            {
+                var source = (int)edge.Source.UserData;
+                var target = (int)edge.Target.UserData;
+                var goSource = map[source];
+                var goTarget = map[target];
+                var goEdge = new GameObject("Edge");
+                goEdge.transform.parent = root.transform;
+                goEdge.transform.localPosition = Vector3.zero;
+                goEdge.transform.localRotation = Quaternion.identity;
+                goEdge.transform.localScale = Vector3.one;
+                var line = goEdge.AddComponent<LineRenderer>();
+                line.SetPositions(new[] { goSource.transform.localPosition, goTarget.transform.localPosition });
             }
         }
     }
