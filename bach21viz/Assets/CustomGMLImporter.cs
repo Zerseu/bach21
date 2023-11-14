@@ -31,12 +31,18 @@ public static class CustomGMLImporter
             var graph = new MyGraph(path);
             foreach (var node in graph.Layout.Nodes)
             {
-                var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                sphere.transform.parent = root.transform;
-                sphere.transform.localPosition =
-                    new Vector3((float)(node.Center.X / 10.0), 0, (float)(node.Center.Y / 10.0));
-                sphere.transform.localRotation = Quaternion.identity;
-                sphere.transform.localScale = Vector3.one;
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+
+                go.transform.parent = root.transform;
+                go.transform.localPosition =
+                    new Vector3((float)(node.Center.X / 10.0),
+                        graph.Map[(int)node.UserData].Item2.Length,
+                        (float)(node.Center.Y / 10.0));
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = Vector3.one;
+
+                var renderer = go.GetComponent<MeshRenderer>();
+                renderer.sharedMaterial.color = Color.green;
             }
         }
     }
