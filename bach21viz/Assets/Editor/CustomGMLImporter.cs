@@ -4,13 +4,14 @@ using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Assertions;
+using UnityEngine.Rendering;
 
 public static class CustomGMLImporter
 {
-    [MenuItem("Assets/Import Layout")]
+    [MenuItem("Assets/Import *.GML")]
     private static void Import()
     {
-        var path = EditorUtility.OpenFilePanel("Import Layout", Application.dataPath, "gml");
+        var path = EditorUtility.OpenFilePanel("Import *.GML", Application.dataPath, "gml");
         if (!string.IsNullOrEmpty(path))
         {
             var root = new GameObject("Root")
@@ -26,21 +27,28 @@ public static class CustomGMLImporter
             var graph = new Graph(path);
             graph.Layout(path.Replace(".gml", ".json"));
             var map = new Dictionary<int, GameObject>();
+            var matNode = new Material(Shader.Find("Diffuse"))
+            {
+                color = Color.green
+            };
 
             foreach (var node in graph.Nodes)
             {
                 var goNode = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Object.DestroyImmediate(goNode.GetComponent<BoxCollider>());
                 goNode.name = "Node";
                 goNode.transform.parent = root.transform;
                 goNode.transform.localPosition = node.Position;
                 goNode.transform.localRotation = Quaternion.identity;
                 goNode.transform.localScale = Vector3.one;
-                goNode.GetComponent<MeshRenderer>().sharedMaterial.color = Color.green;
+                var renderer = goNode.GetComponent<MeshRenderer>();
+                renderer.sharedMaterial = matNode;
+                renderer.SimplifyLighting();
                 map.Add(node.Id, goNode);
             }
 
             const float lineWidth = 0.1f;
-            var material = new Material(Shader.Find("Diffuse"))
+            var matEdge = new Material(Shader.Find("Diffuse"))
             {
                 color = Color.black
             };
@@ -56,13 +64,24 @@ public static class CustomGMLImporter
                 goEdge.transform.localPosition = Vector3.zero;
                 goEdge.transform.localRotation = Quaternion.identity;
                 goEdge.transform.localScale = Vector3.one;
-                var line = goEdge.AddComponent<LineRenderer>();
-                line.SetPositions(new[] { goSource.transform.localPosition, goTarget.transform.localPosition });
-                line.startWidth = lineWidth;
-                line.endWidth = lineWidth;
-                line.sharedMaterial = material;
+                var renderer = goEdge.AddComponent<LineRenderer>();
+                renderer.SetPositions(new[] { goSource.transform.localPosition, goTarget.transform.localPosition });
+                renderer.startWidth = lineWidth;
+                renderer.endWidth = lineWidth;
+                renderer.sharedMaterial = matEdge;
+                renderer.SimplifyLighting();
             }
         }
+    }
+
+    private static void SimplifyLighting(this Renderer renderer)
+    {
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        renderer.lightProbeUsage = LightProbeUsage.Off;
+        renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+        renderer.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
+        renderer.allowOcclusionWhenDynamic = false;
     }
 }
 

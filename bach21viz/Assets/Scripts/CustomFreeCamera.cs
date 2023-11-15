@@ -3,11 +3,11 @@ using UnityEngine;
 public class CustomFreeCamera : MonoBehaviour
 {
     private bool _looking;
-    public float fastMovementSpeed = 50f;
+    public float fastMovementSpeed = 100f;
     public float fastZoomSensitivity = 50f;
-    public float freeLookSensitivity = 3f;
-    public float movementSpeed = 10f;
-    public float zoomSensitivity = 10f;
+    public float freeLookSensitivity = 5f;
+    public float movementSpeed = 50f;
+    public float zoomSensitivity = 25f;
 
     private void Update()
     {
