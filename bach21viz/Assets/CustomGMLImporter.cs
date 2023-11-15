@@ -1,15 +1,16 @@
 using System.Collections.Generic;
 using System.IO;
+using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Assertions;
 
 public static class CustomGMLImporter
 {
-    [MenuItem("Assets/Import *.GML")]
+    [MenuItem("Assets/Import Layout")]
     private static void Import()
     {
-        var path = EditorUtility.OpenFilePanel("Layout Selector", Application.dataPath, "gml");
+        var path = EditorUtility.OpenFilePanel("Import Layout", Application.dataPath, "gml");
         if (!string.IsNullOrEmpty(path))
         {
             var root = new GameObject("Root")
@@ -22,7 +23,7 @@ public static class CustomGMLImporter
                 }
             };
 
-            var graph = new MyGraph(path);
+            var graph = new Graph(path);
             graph.Layout(path.Replace(".gml", ".json"));
             var map = new Dictionary<int, GameObject>();
 
@@ -65,9 +66,9 @@ public static class CustomGMLImporter
     }
 }
 
-public sealed class MyNode
+public sealed class Node
 {
-    public MyNode(int id, string label, int occurrence, int length)
+    public Node(int id, string label, int occurrence, int length)
     {
         Id = id;
         Label = label;
@@ -84,26 +85,26 @@ public sealed class MyNode
     public Vector3 Position { get; set; }
 }
 
-public sealed class MyEdge
+public sealed class Edge
 {
-    public MyEdge(MyNode source, MyNode target)
+    public Edge(Node source, Node target)
     {
         Source = source;
         Target = target;
     }
 
-    public MyNode Source { get; }
-    public MyNode Target { get; }
+    public Node Source { get; }
+    public Node Target { get; }
 }
 
-public sealed class MyGraph
+public sealed class Graph
 {
-    public readonly List<MyEdge> Edges = new();
+    public readonly List<Edge> Edges = new();
     public readonly bool IsDirected;
-    public readonly Dictionary<int, MyNode> Map = new();
-    public readonly List<MyNode> Nodes = new();
+    public readonly Dictionary<int, Node> Map = new();
+    public readonly List<Node> Nodes = new();
 
-    public MyGraph(string gmlPath)
+    public Graph(string gmlPath)
     {
         var gmlContent = File.ReadAllLines(gmlPath);
 
@@ -141,9 +142,9 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            var myNode = new MyNode(id, label, occurrence, length);
-            Map.Add(id, myNode);
-            Nodes.Add(myNode);
+            var node = new Node(id, label, occurrence, length);
+            Map.Add(id, node);
+            Nodes.Add(node);
         }
 
         while (gmlContent[gmlIndex].Trim() == "edge")
@@ -161,7 +162,7 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            Edges.Add(new MyEdge(Map[source], Map[target]));
+            Edges.Add(new Edge(Map[source], Map[target]));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
@@ -169,5 +170,13 @@ public sealed class MyGraph
 
     public void Layout(string jsonPath)
     {
+        var positions = JsonConvert.DeserializeObject<float[][]>(File.ReadAllText(jsonPath));
+        Assert.IsTrue(positions.Length == Nodes.Count);
+
+        for (var idx = 0; idx < Nodes.Count; ++idx)
+        {
+            Nodes[idx].Position = new Vector3(positions[idx][0], Nodes[idx].Length - 8, positions[idx][1]);
+            Nodes[idx].Position = Vector3.Scale(Nodes[idx].Position, new Vector3(1f, 2.5f, 1f));
+        }
     }
 }
