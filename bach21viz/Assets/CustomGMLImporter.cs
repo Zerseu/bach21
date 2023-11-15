@@ -1,11 +1,5 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
-using Microsoft.Msagl.Core.Geometry;
-using Microsoft.Msagl.Core.Geometry.Curves;
-using Microsoft.Msagl.Core.Layout;
-using Microsoft.Msagl.Layout.Layered;
-using Microsoft.Msagl.Miscellaneous;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Assertions;
@@ -18,7 +12,7 @@ public static class CustomGMLImporter
         var path = EditorUtility.OpenFilePanel("Layout Selector", Application.dataPath, "gml");
         if (!string.IsNullOrEmpty(path))
         {
-            var root = new GameObject("GML Root")
+            var root = new GameObject("Root")
             {
                 transform =
                 {
@@ -29,27 +23,31 @@ public static class CustomGMLImporter
             };
 
             var graph = new MyGraph(path);
+            graph.Layout(path.Replace(".gml", ".json"));
             var map = new Dictionary<int, GameObject>();
 
-            foreach (var node in graph.Layout.Nodes)
+            foreach (var node in graph.Nodes)
             {
                 var goNode = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 goNode.name = "Node";
                 goNode.transform.parent = root.transform;
-                goNode.transform.localPosition =
-                    new Vector3((float)(node.Center.X / 10.0),
-                        graph.Map[(int)node.UserData].Item2.Length,
-                        (float)(node.Center.Y / 10.0));
+                goNode.transform.localPosition = node.Position;
                 goNode.transform.localRotation = Quaternion.identity;
                 goNode.transform.localScale = Vector3.one;
                 goNode.GetComponent<MeshRenderer>().sharedMaterial.color = Color.green;
-                map.Add((int)node.UserData, goNode);
+                map.Add(node.Id, goNode);
             }
 
-            foreach (var edge in graph.Layout.Edges)
+            const float lineWidth = 0.1f;
+            var material = new Material(Shader.Find("Diffuse"))
             {
-                var source = (int)edge.Source.UserData;
-                var target = (int)edge.Target.UserData;
+                color = Color.black
+            };
+
+            foreach (var edge in graph.Edges)
+            {
+                var source = edge.Source.Id;
+                var target = edge.Target.Id;
                 var goSource = map[source];
                 var goTarget = map[target];
                 var goEdge = new GameObject("Edge");
@@ -59,6 +57,9 @@ public static class CustomGMLImporter
                 goEdge.transform.localScale = Vector3.one;
                 var line = goEdge.AddComponent<LineRenderer>();
                 line.SetPositions(new[] { goSource.transform.localPosition, goTarget.transform.localPosition });
+                line.startWidth = lineWidth;
+                line.endWidth = lineWidth;
+                line.sharedMaterial = material;
             }
         }
     }
@@ -72,6 +73,7 @@ public sealed class MyNode
         Label = label;
         Occurrence = occurrence;
         Length = length;
+        Position = Vector3.zero;
     }
 
     public int Id { get; }
@@ -79,6 +81,7 @@ public sealed class MyNode
     public string Label { get; }
     public int Length { get; }
     public int Occurrence { get; }
+    public Vector3 Position { get; set; }
 }
 
 public sealed class MyEdge
@@ -95,12 +98,9 @@ public sealed class MyEdge
 
 public sealed class MyGraph
 {
-    public const float NodeRadius = 1f;
-    public const float EdgeLength = 1f;
     public readonly List<MyEdge> Edges = new();
     public readonly bool IsDirected;
-    public readonly GeometryGraph Layout = new();
-    public readonly Dictionary<int, Tuple<Node, MyNode>> Map = new();
+    public readonly Dictionary<int, MyNode> Map = new();
     public readonly List<MyNode> Nodes = new();
 
     public MyGraph(string gmlPath)
@@ -141,10 +141,8 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            var node = new Node(CurveFactory.CreateCircle(NodeRadius, new Point()), id);
             var myNode = new MyNode(id, label, occurrence, length);
-            Map.Add(id, new Tuple<Node, MyNode>(node, myNode));
-            Layout.Nodes.Add(node);
+            Map.Add(id, myNode);
             Nodes.Add(myNode);
         }
 
@@ -163,11 +161,13 @@ public sealed class MyGraph
             gmlIndex++;
             Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
             gmlIndex++;
-            Layout.Edges.Add(new Edge(Map[source].Item1, Map[target].Item1) { Length = EdgeLength });
-            Edges.Add(new MyEdge(Map[source].Item2, Map[target].Item2));
+            Edges.Add(new MyEdge(Map[source], Map[target]));
         }
 
         Assert.IsTrue(gmlContent[gmlIndex].Trim() == "]");
-        LayoutHelpers.CalculateLayout(Layout, new SugiyamaLayoutSettings(), null);
+    }
+
+    public void Layout(string jsonPath)
+    {
     }
 }
