@@ -7,7 +7,7 @@ public class MeshDebugger : MonoBehaviour
 {
     private Color _color;
     private MeshRenderer _renderer;
-    [TextArea(10, 20)] public string info;
+    [TextArea(10, 20)] public string Info;
 
     private void Start()
     {
@@ -23,5 +23,10 @@ public class MeshDebugger : MonoBehaviour
     private void OnMouseExit()
     {
         _renderer.material.color = _color;
+    }
+
+    private void OnMouseUpAsButton()
+    {
+        Camera.main.GetComponent<SineWave>().PlayNote();
     }
 }

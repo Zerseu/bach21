@@ -46,7 +46,7 @@ public static class GMLImporter
                 renderer.SimplifyLighting();
                 map.Add(node.Id, goNode);
                 var debugger = goNode.AddComponent<MeshDebugger>();
-                debugger.info = node.Label;
+                debugger.Info = node.Label;
             }
 
             const float lineWidth = 0.1f;
