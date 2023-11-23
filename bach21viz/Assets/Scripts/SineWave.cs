@@ -1,6 +1,7 @@
 ﻿#region Using
 
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -11,40 +12,41 @@ public sealed class SineWave : MonoBehaviour
 {
     private const int Channels = 2;
     private const int SamplingRate = 44100;
-    private const double ConcertPitch = 440.0;
+    private const double ConcertPitch = 440;
+    private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
     private AudioSource _audioSource;
+    private float _frequency, _duration;
+    private string[] _notes;
     private int _position;
-    private float Frequency { get; set; }
-    private float Duration { get; set; }
 
     private static int Modulo(int x, int y)
     {
-        var result = x % y;
-        return result < 0 ? result + y : result;
+        var z = x % y;
+        return z < 0 ? z + y : z;
     }
 
-    public static string GetNote(double frequency)
+    private static string GetNote(double frequency)
     {
         var idx = (int)Math.Round(12.0 * Math.Log(frequency / ConcertPitch, 2.0) + 49.0);
         return Notes[Modulo(idx - 1, 12)] + (idx + 8) / 12;
     }
 
-    private static int HalfTones(string note)
+    private static int HalfToneDistance(string note)
     {
         var oct = (byte)(note[^1] - '0');
         var idx = Array.IndexOf(Notes, note[..^1]);
         return idx >= 3 ? oct * 12 + idx - 3 : oct * 12 + idx + 9;
     }
 
-    public static double GetFrequency(string note)
+    private static double GetFrequency(string note)
     {
-        return ConcertPitch * Math.Pow(2.0, (HalfTones(note) - HalfTones("A4")) / 12.0);
+        return ConcertPitch * Math.Pow(2.0, (HalfToneDistance(note) - 57.0) / 12.0);
     }
 
     private static void RunUnitTest()
     {
-        double[] hz =
+        double[] frequency =
         {
             16.35,
             17.32,
@@ -156,8 +158,8 @@ public sealed class SineWave : MonoBehaviour
             7902.13
         };
 
-        foreach (var f in hz)
-            Assert.IsTrue(Math.Abs(GetFrequency(GetNote(f)) - f) < 0.01);
+        foreach (var f in frequency)
+            Assert.IsTrue(Math.Abs(GetFrequency(GetNote(f)) - f) <= 0.01);
     }
 
     private void Start()
@@ -166,23 +168,44 @@ public sealed class SineWave : MonoBehaviour
         _audioSource = GetComponent<AudioSource>();
     }
 
-    public void PlayNote(float frequency = 440.0f, float duration = 0.25f)
+    private void PlayNote(float frequency, float duration)
     {
-        Debug.Log(GetFrequency(GetNote(frequency)));
-        _audioSource.Stop();
         _position = 0;
-        Frequency = frequency;
-        Duration = duration;
-        var audioClip = AudioClip.Create($"Note {Frequency} Hz", (int)(Duration * SamplingRate), Channels, SamplingRate,
+        _frequency = frequency;
+        _duration = duration;
+        var audioClip = AudioClip.Create($"Note {_frequency} Hz", (int)(_duration * SamplingRate), Channels,
+            SamplingRate,
             false, OnAudioRead);
         _audioSource.PlayOneShot(audioClip);
+    }
+
+    private void PlayNote(string note)
+    {
+        PlayNote((float)GetFrequency(note), DefaultDuration);
+    }
+
+    public void PlayNotes(params string[] notes)
+    {
+        StopAllCoroutines();
+        _audioSource.Stop();
+        _notes = notes;
+        StartCoroutine(PlayNotesCoroutine());
+    }
+
+    private IEnumerator PlayNotesCoroutine()
+    {
+        foreach (var note in _notes)
+        {
+            PlayNote(note);
+            yield return new WaitForSeconds(DefaultDuration);
+        }
     }
 
     private void OnAudioRead(float[] data)
     {
         for (var idx = 0; idx < data.Length; idx++)
         {
-            data[idx] = Mathf.Sin(2 * Mathf.PI * Frequency * _position / SamplingRate);
+            data[idx] = Mathf.Sin(2 * Mathf.PI * _frequency * _position / SamplingRate);
             _position++;
         }
     }

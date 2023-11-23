@@ -27,6 +27,6 @@ public class MeshDebugger : MonoBehaviour
 
     private void OnMouseUpAsButton()
     {
-        Camera.main.GetComponent<SineWave>().PlayNote();
+        Camera.main.GetComponent<SineWave>().PlayNotes(Info.Split());
     }
 }
