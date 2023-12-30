@@ -5,13 +5,13 @@ import sys
 
 import numpy as np
 import tensorflow as tf
+from data import get_dir, generate_input, generate_output
 from keras.callbacks import ModelCheckpoint, CSVLogger
 from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, Bidirectional, LSTM, GRU
 from keras.models import load_model, Sequential
 from keras.utils import to_categorical
 
 from config import Config
-from data import get_dir, generate_input, generate_output
 
 seed = 0
 random.seed(seed)

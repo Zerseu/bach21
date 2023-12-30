@@ -10,11 +10,28 @@ using UnityEngine.Assertions;
 [RequireComponent(typeof(AudioSource))]
 public sealed class SineWave : MonoBehaviour
 {
-    private const int Channels = 2;
+    private const int Channels = 1;
     private const int SamplingRate = 44100;
     private const double ConcertPitch = 440;
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
+
+    private static readonly double[] HarmonicStrengths =
+    {
+        1,
+        0.5,
+        0.25,
+        0.124,
+        0.07,
+        0.03,
+        0.015,
+        0.0075,
+        0.003,
+        0.0015,
+        0.0007,
+        0.0003
+    };
+
     private AudioSource _audioSource;
     private float _frequency, _duration;
     private string[] _notes;
@@ -205,8 +222,16 @@ public sealed class SineWave : MonoBehaviour
     {
         for (var idx = 0; idx < data.Length; idx++)
         {
-            data[idx] = Mathf.Sin(2 * Mathf.PI * _frequency * _position / SamplingRate);
+            data[idx] = HarmonicSeries();
             _position++;
         }
+    }
+
+    private float HarmonicSeries()
+    {
+        var signal = 0.0;
+        for (var idx = 0; idx < 12; idx++)
+            signal += HarmonicStrengths[idx] * Math.Sin(2.0 * Math.PI * _frequency * idx * _position / SamplingRate);
+        return (float)signal;
     }
 }
