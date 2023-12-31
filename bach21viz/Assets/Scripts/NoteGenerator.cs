@@ -17,21 +17,23 @@ public sealed class NoteGenerator : MonoBehaviour
     private const double ConcertPitch = 440;
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
-    private static readonly double[] HarmonicStrengths = new double[HarmonicCount];
+    private static readonly double[] HarmonicStrength = new double[HarmonicCount];
     private static readonly PerlinNoise Noise = new();
     private AudioSource _audioSource;
     private float _frequency, _duration;
     private string[] _notes;
     private int _position;
 
+    public AnimationCurve NoteStrength;
+
     static NoteGenerator()
     {
         for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
-            HarmonicStrengths[harmonic - 1] = 1.0 / Math.Pow(2.0, harmonic);
-        var scale = 1.0 / HarmonicStrengths.Sum();
+            HarmonicStrength[harmonic - 1] = 1.0 / Math.Pow(2.0, harmonic);
+        var scale = 1.0 / HarmonicStrength.Sum();
         for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
-            HarmonicStrengths[harmonic - 1] *= scale;
-        Debug.Assert(Math.Abs(HarmonicStrengths.Sum() - 1.0) <= 1E-6);
+            HarmonicStrength[harmonic - 1] *= scale;
+        Debug.Assert(Math.Abs(HarmonicStrength.Sum() - 1.0) <= 1E-6);
     }
 
     private static int Modulo(int x, int y)
@@ -232,10 +234,10 @@ public sealed class NoteGenerator : MonoBehaviour
         for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
         {
             var value = WaveSine(_frequency, harmonic, time);
-            signal += HarmonicStrengths[harmonic - 1] * value;
+            signal += HarmonicStrength[harmonic - 1] * value;
         }
 
-        return (float)signal;
+        return NoteStrength.Evaluate((float)time / DefaultDuration) * (float)signal;
     }
 
     private static double WaveSawtooth(double f, int h, double t)
@@ -253,6 +255,7 @@ public sealed class NoteGenerator : MonoBehaviour
     {
         return 2.0 * Math.Abs(2 * (f * h * t - Math.Floor(f * h * t + 0.5))) - 1.0;
     }
+
 
     private static double WaveSine(double f, int h, double t)
     {
