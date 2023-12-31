@@ -8,7 +8,7 @@ using UnityEngine.Assertions;
 #endregion
 
 [RequireComponent(typeof(AudioSource))]
-public sealed class SineWave : MonoBehaviour
+public sealed class NoteGenerator : MonoBehaviour
 {
     private const int Channels = 1;
     private const int SamplingRate = 44100;
@@ -17,12 +17,13 @@ public sealed class SineWave : MonoBehaviour
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
     private static readonly double[] HarmonicStrengths = new double[HarmonicCount];
+    private static readonly PerlinNoise Noise = new();
     private AudioSource _audioSource;
     private float _frequency, _duration;
     private string[] _notes;
     private int _position;
 
-    static SineWave()
+    static NoteGenerator()
     {
         for (var idx = 1; idx <= HarmonicCount; idx++)
             HarmonicStrengths[idx - 1] = 1.0 / Math.Pow(2.0, idx);
@@ -173,6 +174,7 @@ public sealed class SineWave : MonoBehaviour
     private void Start()
     {
         RunUnitTest();
+        Noise.Initialize();
         _audioSource = GetComponent<AudioSource>();
     }
 
@@ -222,8 +224,12 @@ public sealed class SineWave : MonoBehaviour
     {
         var signal = 0.0;
         for (var idx = 1; idx <= HarmonicCount; idx++)
-            signal += HarmonicStrengths[idx - 1] *
-                      Math.Sin(2.0 * Math.PI * _frequency * idx * _position / SamplingRate);
+        {
+            var time = 1.0 * _position / SamplingRate;
+            var sine = Math.Sin(2.0 * Math.PI * _frequency * idx * time);
+            signal += HarmonicStrengths[idx - 1] * sine;
+        }
+
         return (float)signal;
     }
 }
