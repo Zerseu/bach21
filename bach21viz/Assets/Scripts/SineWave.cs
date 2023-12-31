@@ -12,30 +12,21 @@ public sealed class SineWave : MonoBehaviour
 {
     private const int Channels = 1;
     private const int SamplingRate = 44100;
+    private const int HarmonicCount = 12;
     private const double ConcertPitch = 440;
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
-
-    private static readonly double[] HarmonicStrengths =
-    {
-        1,
-        0.5,
-        0.25,
-        0.124,
-        0.07,
-        0.03,
-        0.015,
-        0.0075,
-        0.003,
-        0.0015,
-        0.0007,
-        0.0003
-    };
-
+    private static readonly double[] HarmonicStrengths = new double[HarmonicCount];
     private AudioSource _audioSource;
     private float _frequency, _duration;
     private string[] _notes;
     private int _position;
+
+    static SineWave()
+    {
+        for (var idx = 1; idx <= HarmonicCount; idx++)
+            HarmonicStrengths[idx - 1] = 1.0 / Math.Pow(2.0, idx);
+    }
 
     private static int Modulo(int x, int y)
     {
@@ -230,8 +221,9 @@ public sealed class SineWave : MonoBehaviour
     private float HarmonicSeries()
     {
         var signal = 0.0;
-        for (var idx = 0; idx < 12; idx++)
-            signal += HarmonicStrengths[idx] * Math.Sin(2.0 * Math.PI * _frequency * idx * _position / SamplingRate);
+        for (var idx = 1; idx <= HarmonicCount; idx++)
+            signal += HarmonicStrengths[idx - 1] *
+                      Math.Sin(2.0 * Math.PI * _frequency * idx * _position / SamplingRate);
         return (float)signal;
     }
 }
