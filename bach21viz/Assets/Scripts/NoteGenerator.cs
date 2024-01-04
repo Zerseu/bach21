@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections;
-using System.Linq;
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -17,7 +16,23 @@ public sealed class NoteGenerator : MonoBehaviour
     private const double ConcertPitch = 440;
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
-    private static readonly double[] HarmonicStrength = new double[HarmonicCount];
+
+    private static readonly double[] HarmonicStrength =
+    {
+        1,
+        0.5,
+        0.7,
+        0.5,
+        0.3,
+        0.2,
+        0.1,
+        0.05,
+        0.04,
+        0.025,
+        0.01,
+        0.015
+    };
+
     private static readonly PerlinNoise Noise = new();
     private AudioSource _audioSource;
     private float _frequency, _duration;
@@ -25,16 +40,6 @@ public sealed class NoteGenerator : MonoBehaviour
     private int _position;
 
     public AnimationCurve NoteStrength;
-
-    static NoteGenerator()
-    {
-        for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
-            HarmonicStrength[harmonic - 1] = 1.0 / Math.Pow(2.0, harmonic);
-        var scale = 1.0 / HarmonicStrength.Sum();
-        for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
-            HarmonicStrength[harmonic - 1] *= scale;
-        Debug.Assert(Math.Abs(HarmonicStrength.Sum() - 1.0) <= 1E-6);
-    }
 
     private static int Modulo(int x, int y)
     {
@@ -233,32 +238,32 @@ public sealed class NoteGenerator : MonoBehaviour
         var signal = 0.0;
         for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
         {
-            var value = WaveSine(_frequency, harmonic, time);
+            var value = WaveSine(_frequency * harmonic, time);
             signal += HarmonicStrength[harmonic - 1] * value;
         }
 
         return NoteStrength.Evaluate((float)time / DefaultDuration) * (float)signal;
     }
 
-    private static double WaveSawtooth(double f, int h, double t)
+    private static double WaveSawtooth(double f, double t)
     {
-        return 2.0 * (f * h * t - Math.Floor(0.5 + f * h * t));
+        return 2.0 * (f * t - Math.Floor(0.5 + f * t));
     }
 
-    private static double WaveSquare(double f, int h, double t)
+    private static double WaveSquare(double f, double t)
     {
-        return 2.0 * (2.0 * Math.Floor(f * h * t) - Math.Floor(2.0 * f * h * t)) + 1.0;
-    }
-
-
-    private static double WaveTriangle(double f, int h, double t)
-    {
-        return 2.0 * Math.Abs(2 * (f * h * t - Math.Floor(f * h * t + 0.5))) - 1.0;
+        return 2.0 * (2.0 * Math.Floor(f * t) - Math.Floor(2.0 * f * t)) + 1.0;
     }
 
 
-    private static double WaveSine(double f, int h, double t)
+    private static double WaveTriangle(double f, double t)
     {
-        return Math.Sin(2.0 * Math.PI * (f * h * t));
+        return 2.0 * Math.Abs(2 * (f * t - Math.Floor(f * t + 0.5))) - 1.0;
+    }
+
+
+    private static double WaveSine(double f, double t)
+    {
+        return Math.Sin(2.0 * Math.PI * (f * t));
     }
 }
