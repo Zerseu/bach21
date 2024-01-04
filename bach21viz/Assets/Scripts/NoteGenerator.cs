@@ -12,7 +12,6 @@ public sealed class NoteGenerator : MonoBehaviour
 {
     private const int Channels = 1;
     private const int SamplingRate = 44100;
-    private const int HarmonicCount = 12;
     private const double ConcertPitch = 440;
     private const float DefaultDuration = 0.25f;
     private static readonly string[] Notes = { "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#" };
@@ -20,17 +19,15 @@ public sealed class NoteGenerator : MonoBehaviour
     private static readonly double[] HarmonicStrength =
     {
         1,
-        0.5,
-        0.7,
-        0.5,
-        0.3,
-        0.2,
-        0.1,
-        0.05,
-        0.04,
-        0.025,
-        0.01,
-        0.015
+        0.263,
+        0.14,
+        0.099,
+        0.209,
+        0.02,
+        0.029,
+        0.077,
+        0.017,
+        0.01
     };
 
     private static readonly PerlinNoise Noise = new();
@@ -236,7 +233,7 @@ public sealed class NoteGenerator : MonoBehaviour
     {
         var time = 1.0 * _position / SamplingRate;
         var signal = 0.0;
-        for (var harmonic = 1; harmonic <= HarmonicCount; harmonic++)
+        for (var harmonic = 1; harmonic <= HarmonicStrength.Length; harmonic++)
         {
             var value = WaveSine(_frequency * harmonic, time);
             signal += HarmonicStrength[harmonic - 1] * value;
