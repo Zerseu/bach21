@@ -5,9 +5,10 @@ import sys
 
 import igraph as ig
 import regex as re
-from data import get_dir, generate_input
 from music21 import pitch
 from tqdm import tqdm
+
+from data import get_dir, generate_input
 
 
 def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):

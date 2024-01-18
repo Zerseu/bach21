@@ -2,11 +2,13 @@ import os.path
 import random
 from typing import Optional
 
+import music21.stream
 from music21 import *
 from tqdm import tqdm
 
 InternalCorpus: bool = True
 ExternalCorpus: Optional[str] = "C:\\midi"
+FilterMatches: bool = False
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
@@ -36,6 +38,21 @@ def lcs(a: [float], b: [float]) -> int:
     return ret
 
 
+def valid_part(part: music21.stream.Part, instruments: [str]) -> bool:
+    if len(instruments) == 0:
+        return True
+    else:
+        best_name = part.getInstrument().bestName()
+        if best_name is None:
+            return False
+        ok = False
+        for inst in instruments:
+            if inst.lower() in best_name.lower():
+                ok = True
+                break
+        return ok
+
+
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     crt_dir = get_dir(composer, instruments)
 
@@ -53,92 +70,75 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     matches = []
 
     if InternalCorpus is True:
-        print('Parsing internal corpus...')
-        print('music21')
-        for composition in corpus.search(composer, 'composer'):
-            parts = instrument.partitionByInstrument(corpus.parse(composition))
+        print('Parsing internal corpus -', 'music21')
+        for composition in tqdm(corpus.search(composer, 'composer')):
+            parts = instrument.partitionByInstrument(corpus.parse(composition)).parts
             for part in parts:
-                if len(instruments) == 0:
+                if valid_part(part, instruments):
                     matches.append(part)
-                else:
-                    best_name = part.getInstrument().bestName()
-                    ok = False
-                    for inst in instruments:
-                        if inst.lower() in best_name.lower():
-                            ok = True
-                            break
-                    if ok:
-                        matches.append(part)
         print('Done parsing internal corpus...')
 
     if ExternalCorpus is not None:
-        print('Parsing external corpus...')
-        print(ExternalCorpus)
-        for root, dirs, files in os.walk(ExternalCorpus):
-            if len(files) > 0:
-                for pth in sorted(files):
-                    pth = os.path.join(root, pth)
-                    if pth.endswith('.mid'):
-                        if composer.lower() in pth.lower():
-                            ok = False
-                            for inst in instruments:
-                                if inst.lower() in pth.lower():
-                                    ok = True
-                                    break
-                            if ok:
-                                print('Parsing', pth)
-                                parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi'))
-                                for part in parts:
-                                    matches.append(part)
+        print('Parsing external corpus -', ExternalCorpus)
+        for root, dirs, files in tqdm(os.walk(ExternalCorpus)):
+            for pth in sorted(files):
+                pth = os.path.join(root, pth)
+                if pth.endswith('.mid'):
+                    if composer.lower() in pth.lower():
+                        parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi')).parts
+                        for part in parts:
+                            if valid_part(part, instruments):
+                                matches.append(part)
         print('Done parsing external corpus...')
 
-    print('Excluding duplicate parts...')
-    pitches = []
-    durations = []
-    for part in matches:
-        pitches.append([])
-        durations.append([])
-        for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
-            durations[-1].append(element.duration.quarterLength)
-            if element.isNote:
-                pitches[-1].append(element.pitch.ps)
-            if element.isRest:
-                pitches[-1].append(0)
+    if FilterMatches:
+        print('Excluding duplicate parts...')
+        pitches = []
+        durations = []
+        for part in matches:
+            pitches.append([])
+            durations.append([])
+            for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
+                durations[-1].append(element.duration.quarterLength)
+                if element.isNote:
+                    pitches[-1].append(element.pitch.ps)
+                if element.isRest:
+                    pitches[-1].append(0)
 
-    done = False
-    while not done:
-        done = True
-        for idx in range(len(matches) - 1):
-            if len(pitches[idx]) < len(pitches[idx + 1]):
-                aux = pitches[idx]
-                pitches[idx] = pitches[idx + 1]
-                pitches[idx + 1] = aux
-                aux = durations[idx]
-                durations[idx] = durations[idx + 1]
-                durations[idx + 1] = aux
-                aux = matches[idx]
-                matches[idx] = matches[idx + 1]
-                matches[idx + 1] = aux
-                done = False
+        done = False
+        while not done:
+            done = True
+            for idx in range(len(matches) - 1):
+                if len(pitches[idx]) < len(pitches[idx + 1]):
+                    aux = pitches[idx]
+                    pitches[idx] = pitches[idx + 1]
+                    pitches[idx + 1] = aux
+                    aux = durations[idx]
+                    durations[idx] = durations[idx + 1]
+                    durations[idx + 1] = aux
+                    aux = matches[idx]
+                    matches[idx] = matches[idx + 1]
+                    matches[idx + 1] = aux
+                    done = False
 
-    invalid = 0
-    valid = [True]
-    for idx in tqdm(range(1, len(matches))):
-        ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
-        ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.5
+        invalid = 0
+        valid = [True]
+        for idx in tqdm(range(1, len(matches))):
+            ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
+            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.5
 
-        if ok:
-            for idy in range(idx):
-                if valid[idy]:
-                    if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.5:
-                        ok = False
-                        break
-        if not ok:
-            invalid += 1
-        valid.append(ok)
-    matches = [matches[idx] for idx in range(len(matches)) if valid[idx]]
-    print('Excluded', invalid, 'parts!')
-    print('Done excluding duplicate parts...')
+            if ok:
+                for idy in range(idx):
+                    if valid[idy]:
+                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.5:
+                            ok = False
+                            break
+            if not ok:
+                invalid += 1
+            valid.append(ok)
+        matches = [matches[idx] for idx in range(len(matches)) if valid[idx]]
+        print('Excluded', invalid, 'parts!')
+        print('Done excluding duplicate parts...')
 
     random.shuffle(matches)
 
