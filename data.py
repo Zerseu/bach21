@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 InternalCorpus: bool = True
 ExternalCorpus: Optional[str] = "C:\\midi"
-FilterMatches: bool = False
+FilterMatches: bool = True
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
