@@ -125,12 +125,12 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         valid = [True]
         for idx in tqdm(range(1, len(matches))):
             ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
-            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) <= 0.5
+            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) < 0.2
 
             if ok:
                 for idy in range(idx):
                     if valid[idy]:
-                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) >= 0.5:
+                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) > 0.8:
                             ok = False
                             break
             if not ok:
