@@ -13,9 +13,9 @@ FilterMatches: bool = True
 
 def get_dir(composer: str, instruments: [str]) -> str:
     if len(instruments) == 0:
-        crt_dir = os.path.join('data', composer, 'all')
+        crt_dir = os.path.join('db', composer, 'all')
     else:
-        crt_dir = os.path.join('data', composer, instruments[0])
+        crt_dir = os.path.join('db', composer, instruments[0])
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir

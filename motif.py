@@ -1,11 +1,12 @@
 import json
 import multiprocessing
 import os.path
-import sys
 
 import igraph as ig
+import networkx as nx
 import regex as re
 from music21 import pitch
+from netrd.distance import LaplacianSpectral
 from tqdm import tqdm
 
 from data import get_dir, generate_input
@@ -124,5 +125,22 @@ def query_all(composer: str, instruments: [str]):
     print('Component plot complete...')
 
 
+def query_distance(composer1: str, instruments1: [str],
+                   composer2: str, instruments2: [str]) -> float:
+    query_all(composer1, instruments1)
+    query_all(composer2, instruments2)
+
+    dir1 = get_dir(composer1, instruments1)
+    dir2 = get_dir(composer2, instruments2)
+
+    g1 = nx.read_gml(os.path.join(dir1, 'motifs.gml'))
+    g2 = nx.read_gml(os.path.join(dir2, 'motifs.gml'))
+
+    dist_obj = LaplacianSpectral()
+    return dist_obj.dist(g1, g2)
+
+
 if __name__ == '__main__':
-    query_all(sys.argv[1], sys.argv[2:])
+    # query_all(sys.argv[1], sys.argv[2:])
+    print(query_distance('bach', ['violin'],
+                         'bach', ['flute']))
