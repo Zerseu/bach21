@@ -41,7 +41,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                              literal_spaces=False),
                                            string=sig_str,
                                            overlapped=True))
-                if motif_occ > 1:
+                if motif_occ >= 5:
                     motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -54,7 +54,7 @@ def query_all(composer: str, instruments: [str]):
     crt_dir = get_dir(composer, instruments)
 
     bound_lower_inc = 8
-    bound_upper_exc = 25
+    bound_upper_inc = 24
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
         generate_input(composer, instruments)
@@ -64,10 +64,10 @@ def query_all(composer: str, instruments: [str]):
         with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
             pitches += file.read().split(' ')
 
-        print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_exc - 1)
+        print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_inc)
         motifs = {}
         with multiprocessing.Pool(4) as pool:
-            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower_inc, bound_upper_exc)]
+            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower_inc, bound_upper_inc + 1)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
         print('Motif discovery complete...')
@@ -77,7 +77,7 @@ def query_all(composer: str, instruments: [str]):
         labels = []
         occurrences = []
         lengths = []
-        for motif_length in range(bound_lower_inc, bound_upper_exc):
+        for motif_length in range(bound_lower_inc, bound_upper_inc + 1):
             vertices += len(motifs[motif_length])
             for motif in motifs[motif_length]:
                 labels.append(motif)
