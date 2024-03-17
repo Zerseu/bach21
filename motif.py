@@ -9,7 +9,7 @@ from music21 import pitch
 from netrd.distance import LaplacianSpectral
 from tqdm import tqdm
 
-from data import get_dir, generate_input
+from data import get_dir, generate_input, rebuild_corpus_cache
 
 
 def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):
@@ -142,5 +142,5 @@ def query_distance(composer1: str, instruments1: [str],
 
 if __name__ == '__main__':
     # query_all(sys.argv[1], sys.argv[2:])
-    print(query_distance('bach', ['violin'],
-                         'bach', ['flute']))
+    # print(query_distance('bach', ['violin'], 'bach', ['flute']))
+    rebuild_corpus_cache()

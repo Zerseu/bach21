@@ -1,21 +1,25 @@
+import json
 import os.path
 import random
 from typing import Optional
 
-import music21.stream
 from music21 import *
 from tqdm import tqdm
 
 InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = "C:\\midi"
+ExternalCorpus: Optional[str] = 'C:\\midi'
+CorpusCache: str = 'bach21db'
 FilterMatches: bool = True
+
+if ExternalCorpus is not None:
+    corpus.addPath(ExternalCorpus)
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
     if len(instruments) == 0:
-        crt_dir = os.path.join('bach21db', composer, 'all')
+        crt_dir = os.path.join(CorpusCache, composer, 'all')
     else:
-        crt_dir = os.path.join('bach21db', composer, instruments[0])
+        crt_dir = os.path.join(CorpusCache, composer, instruments[0])
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
@@ -38,19 +42,89 @@ def lcs(a: [float], b: [float]) -> int:
     return ret
 
 
-def valid_part(part: music21.stream.Part, instruments: [str]) -> bool:
+def valid_part(part, instruments: [str]) -> bool:
+    if part is None:
+        return False
     if len(instruments) == 0:
         return True
     else:
-        best_name = part.getInstrument().bestName()
-        if best_name is None:
+        instr = part.getInstrument()
+        if instr is None:
+            return False
+        name = instr.instrumentName
+        if name is None:
             return False
         ok = False
-        for inst in instruments:
-            if inst.lower() in best_name.lower():
+        for instr in instruments:
+            if instr.lower() in name.lower():
                 ok = True
                 break
         return ok
+
+
+def unravel_part(part) -> (str, [float], [float]):
+    if part is None:
+        return None
+    part_instrument = part.getInstrument()
+    if part_instrument is None:
+        return None
+    part_instrument = part_instrument.bestName()
+    if part_instrument is None:
+        return None
+    if part_instrument == "":
+        return None
+    part_instrument = part_instrument.lower()
+    part_pitches = []
+    part_durations = []
+    for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
+        part_durations.append(element.duration.quarterLengthNoTuplets)
+        if element.isNote:
+            part_pitches.append(element.pitch.ps)
+        if element.isRest:
+            part_pitches.append(0)
+    if len(part_pitches) == 0 or len(part_durations) == 0:
+        return None
+    assert len(part_pitches) == len(part_durations)
+    return part_instrument, part_pitches, part_durations
+
+
+def rebuild_corpus_cache():
+    cache_dir = os.path.join(CorpusCache, 'cache')
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    corpus_type = []
+    if InternalCorpus is True:
+        corpus_type.append('core')
+    if ExternalCorpus is not None:
+        corpus_type.append('local')
+    for pth in tqdm(corpus.getPaths(name=corpus_type)):
+        composition = corpus.parse(pth)
+        cache_file = os.path.splitext(composition.metadata.corpusFilePath)[0]
+        if ExternalCorpus is not None and cache_file.startswith(ExternalCorpus):
+            cache_file = cache_file[len(ExternalCorpus) + 1:]
+        cache_file_clean = ''
+        for ch in cache_file:
+            if ch.isalnum():
+                cache_file_clean += ch
+            else:
+                cache_file_clean += '_'
+        while cache_file != cache_file_clean:
+            cache_file = cache_file_clean
+            cache_file_clean = cache_file.replace('__', '_')
+        cache_file = cache_file.lower()
+        cache_file = os.path.join(cache_dir, cache_file + '.json')
+        cache_dict = {}
+        parts = instrument.partitionByInstrument(composition)
+        for part in parts:
+            p = unravel_part(part)
+            if p is not None:
+                if p[0] not in cache_dict:
+                    cache_dict[p[0]] = [[], []]
+                cache_dict[p[0]][0] += p[1]
+                cache_dict[p[0]][1] += p[2]
+        if len(cache_dict) > 0:
+            with open(cache_file, 'wt') as file:
+                json.dump(cache_dict, file)
 
 
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
@@ -72,7 +146,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     if InternalCorpus is True:
         print('Parsing internal corpus -', 'music21')
         for composition in tqdm(corpus.search(composer, 'composer')):
-            parts = instrument.partitionByInstrument(corpus.parse(composition)).parts
+            parts = instrument.partitionByInstrument(corpus.parse(composition))
             for part in parts:
                 if valid_part(part, instruments):
                     matches.append(part)
@@ -85,7 +159,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                 pth = os.path.join(root, pth)
                 if pth.endswith('.mid'):
                     if composer.lower() in pth.lower():
-                        parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi')).parts
+                        parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi'))
                         for part in parts:
                             if valid_part(part, instruments):
                                 matches.append(part)
@@ -125,12 +199,12 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         valid = [True]
         for idx in tqdm(range(1, len(matches))):
             ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
-            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) < 0.2
+            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) < 0.25
 
             if ok:
                 for idy in range(idx):
                     if valid[idy]:
-                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) > 0.8:
+                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) > 0.75:
                             ok = False
                             break
             if not ok:
