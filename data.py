@@ -1,25 +1,19 @@
 import json
 import os.path
-import random
-from typing import Optional
 
+import music21.note
 from music21 import *
 from tqdm import tqdm
 
-InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = 'C:\\midi'
-CorpusCache: str = 'bach21db'
+DataRoot: str = 'bach21data'
 FilterMatches: bool = True
-
-if ExternalCorpus is not None:
-    corpus.addPath(ExternalCorpus)
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
     if len(instruments) == 0:
-        crt_dir = os.path.join(CorpusCache, composer, 'all')
+        crt_dir = os.path.join(DataRoot, composer, 'all')
     else:
-        crt_dir = os.path.join(CorpusCache, composer, instruments[0])
+        crt_dir = os.path.join(DataRoot, composer, instruments[0])
     if not os.path.exists(crt_dir):
         os.makedirs(crt_dir)
     return crt_dir
@@ -42,91 +36,6 @@ def lcs(a: [float], b: [float]) -> int:
     return ret
 
 
-def valid_part(part, instruments: [str]) -> bool:
-    if part is None:
-        return False
-    if len(instruments) == 0:
-        return True
-    else:
-        instr = part.getInstrument()
-        if instr is None:
-            return False
-        name = instr.instrumentName
-        if name is None:
-            return False
-        ok = False
-        for instr in instruments:
-            if instr.lower() in name.lower():
-                ok = True
-                break
-        return ok
-
-
-def unravel_part(part) -> (str, [float], [float]):
-    if part is None:
-        return None
-    part_instrument = part.getInstrument()
-    if part_instrument is None:
-        return None
-    part_instrument = part_instrument.bestName()
-    if part_instrument is None:
-        return None
-    if part_instrument == "":
-        return None
-    part_instrument = part_instrument.lower()
-    part_pitches = []
-    part_durations = []
-    for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
-        part_durations.append(element.duration.quarterLengthNoTuplets)
-        if element.isNote:
-            part_pitches.append(element.pitch.ps)
-        if element.isRest:
-            part_pitches.append(0)
-    if len(part_pitches) == 0 or len(part_durations) == 0:
-        return None
-    assert len(part_pitches) == len(part_durations)
-    return part_instrument, part_pitches, part_durations
-
-
-def rebuild_corpus_cache():
-    cache_dir = os.path.join(CorpusCache, 'cache')
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    corpus_type = []
-    if InternalCorpus is True:
-        corpus_type.append('core')
-    if ExternalCorpus is not None:
-        corpus_type.append('local')
-    for pth in tqdm(corpus.getPaths(name=corpus_type)):
-        composition = corpus.parse(pth)
-        cache_file = os.path.splitext(composition.metadata.corpusFilePath)[0]
-        if ExternalCorpus is not None and cache_file.startswith(ExternalCorpus):
-            cache_file = cache_file[len(ExternalCorpus) + 1:]
-        cache_file_clean = ''
-        for ch in cache_file:
-            if ch.isalnum():
-                cache_file_clean += ch
-            else:
-                cache_file_clean += '_'
-        while cache_file != cache_file_clean:
-            cache_file = cache_file_clean
-            cache_file_clean = cache_file.replace('__', '_')
-        cache_file = cache_file.lower()
-        cache_file = os.path.join(cache_dir, cache_file + '.json')
-        cache_dict = {}
-        parts = instrument.partitionByInstrument(composition)
-        for part in parts:
-            p = unravel_part(part)
-            if p is not None:
-                if p[0] not in cache_dict:
-                    cache_dict[p[0]] = [[], []]
-                cache_dict[p[0]][0] += p[1]
-                cache_dict[p[0]][1] += p[2]
-        if len(cache_dict) > 0:
-            with open(cache_file, 'wt') as file:
-                json.dump(cache_dict, file)
-
-
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     crt_dir = get_dir(composer, instruments)
 
@@ -141,106 +50,91 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
             return
 
     print('Generating input data...')
-    matches = []
+    num_pitches = []
+    num_durations = []
 
-    if InternalCorpus is True:
-        print('Parsing internal corpus -', 'music21')
-        for composition in tqdm(corpus.search(composer, 'composer')):
-            parts = instrument.partitionByInstrument(corpus.parse(composition))
-            for part in parts:
-                if valid_part(part, instruments):
-                    matches.append(part)
-        print('Done parsing internal corpus...')
-
-    if ExternalCorpus is not None:
-        print('Parsing external corpus -', ExternalCorpus)
-        for root, dirs, files in tqdm(os.walk(ExternalCorpus)):
-            for pth in sorted(files):
-                pth = os.path.join(root, pth)
-                if pth.endswith('.mid'):
-                    if composer.lower() in pth.lower():
-                        parts = instrument.partitionByInstrument(converter.parse(value=pth, format='midi'))
+    print('Parsing cached corpus...')
+    for root, dirs, files in tqdm(os.walk('bach21cache')):
+        for file_pth in sorted(files):
+            full_pth = os.path.join(root, file_pth)
+            if full_pth.endswith('.json'):
+                if composer.lower() in file_pth.lower():
+                    with open(full_pth, 'rt') as file:
+                        parts = json.load(file)
                         for part in parts:
-                            if valid_part(part, instruments):
-                                matches.append(part)
-        print('Done parsing external corpus...')
+                            for instr in instruments:
+                                if instr.lower() in part.lower():
+                                    num_pitches.append(parts[part][0])
+                                    num_durations.append(parts[part][1])
+    print('Done parsing cached corpus...')
 
     if FilterMatches:
         print('Excluding duplicate parts...')
-        pitches = []
-        durations = []
-        for part in matches:
-            pitches.append([])
-            durations.append([])
-            for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
-                durations[-1].append(element.duration.quarterLength)
-                if element.isNote:
-                    pitches[-1].append(element.pitch.ps)
-                if element.isRest:
-                    pitches[-1].append(0)
-
+        length = len(num_pitches)
         done = False
         while not done:
             done = True
-            for idx in range(len(matches) - 1):
-                if len(pitches[idx]) < len(pitches[idx + 1]):
-                    aux = pitches[idx]
-                    pitches[idx] = pitches[idx + 1]
-                    pitches[idx + 1] = aux
-                    aux = durations[idx]
-                    durations[idx] = durations[idx + 1]
-                    durations[idx + 1] = aux
-                    aux = matches[idx]
-                    matches[idx] = matches[idx + 1]
-                    matches[idx + 1] = aux
+            for idx in range(length - 1):
+                if len(num_pitches[idx]) < len(num_pitches[idx + 1]):
+                    aux = num_pitches[idx]
+                    num_pitches[idx] = num_pitches[idx + 1]
+                    num_pitches[idx + 1] = aux
+                    aux = num_durations[idx]
+                    num_durations[idx] = num_durations[idx + 1]
+                    num_durations[idx + 1] = aux
                     done = False
 
         invalid = 0
         valid = [True]
-        for idx in tqdm(range(1, len(matches))):
-            ok = len(pitches[idx]) > 0 and len(durations[idx]) > 0
-            ok = ok and sum(p == 0 for p in pitches[idx]) / len(pitches[idx]) < 0.25
+        for idx in tqdm(range(1, length)):
+            ok = len(num_pitches[idx]) > 0 and len(num_durations[idx]) > 0
+            ok = ok and sum(p == 0 for p in num_pitches[idx]) / len(num_pitches[idx]) < 0.25
 
             if ok:
                 for idy in range(idx):
                     if valid[idy]:
-                        if lcs(pitches[idx], pitches[idy]) / min(len(pitches[idx]), len(pitches[idy])) > 0.75:
+                        if lcs(num_pitches[idx], num_pitches[idy]) / min(len(num_pitches[idx]), len(num_pitches[idy])) > 0.75:
                             ok = False
                             break
             if not ok:
                 invalid += 1
             valid.append(ok)
-        matches = [matches[idx] for idx in range(len(matches)) if valid[idx]]
+        num_pitches = [num_pitches[idx] for idx in range(length) if valid[idx]]
+        num_durations = [num_durations[idx] for idx in range(length) if valid[idx]]
         print('Excluded', invalid, 'parts!')
         print('Done excluding duplicate parts...')
 
-    random.shuffle(matches)
+    # random.shuffle(matches)
 
-    pitches = []
-    durations = []
-    for part in matches:
-        for element in part.flatten().getElementsByClass([note.Note, note.Rest]):
-            durations.append(str(element.duration.quarterLength))
-            if element.isNote:
-                pitches.append(str(element.nameWithOctave))
-            if element.isRest:
-                pitches.append('RST')
-        durations.append('SIG')
-        pitches.append('SIG')
-    assert len(pitches) == len(durations)
+    str_pitches = []
+    for pitches in num_pitches:
+        for element in pitches:
+            if element == 0:
+                str_pitches.append('RST')
+            else:
+                str_pitches.append(str(music21.note.Note(element).nameWithOctave))
+        str_pitches.append('SIG')
 
-    length = len(pitches)
+    str_durations = []
+    for durations in num_durations:
+        for element in durations:
+            str_durations.append(str(music21.duration.Duration(element).quarterLength))
+        str_durations.append('SIG')
+
+    assert len(str_pitches) == len(str_durations)
+
+    length = min(len(str_pitches), len(str_durations))
     split_point = int(length * ratio)
 
     with open(pth_pitch_training, 'wt') as file:
-        file.write(' '.join(pitches[:split_point]))
+        file.write(' '.join(str_pitches[:split_point]))
     with open(pth_pitch_validation, 'wt') as file:
-        file.write(' '.join(pitches[split_point:]))
+        file.write(' '.join(str_pitches[split_point:]))
 
     with open(pth_duration_training, 'wt') as file:
-        file.write(' '.join(durations[:split_point]))
+        file.write(' '.join(str_durations[:split_point]))
     with open(pth_duration_validation, 'wt') as file:
-        file.write(' '.join(durations[split_point:]))
+        file.write(' '.join(str_durations[split_point:]))
     print('Done generating input data...')
 
 

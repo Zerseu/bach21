@@ -233,4 +233,5 @@ crashlytics-build.properties
 /bach21viz/[Aa]ssets/[Ss]treamingAssets/aa/*
 
 # Bach 21
-bach21db/
+bach21cache/
+bach21data/
