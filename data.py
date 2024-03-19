@@ -63,7 +63,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                         parts = json.load(file)
                         for part in parts:
                             for instr in instruments:
-                                if instr.lower() in part.lower():
+                                if instr.lower() in part.lower() or instr.lower() in file_pth.lower():
                                     num_pitches.append(parts[part][0])
                                     num_durations.append(parts[part][1])
     print('Done parsing cached corpus...')

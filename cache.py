@@ -40,16 +40,20 @@ def unravel_part(part) -> (str, [float], [float]):
 
 
 def rebuild_cache():
-    cache_dir = os.path.join(CacheRoot, 'cache')
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
+    if not os.path.exists(CacheRoot):
+        os.makedirs(CacheRoot)
     corpus_type = []
     if InternalCorpus is True:
         corpus_type.append('core')
     if ExternalCorpus is not None:
         corpus_type.append('local')
     for pth in tqdm(corpus.getPaths(name=corpus_type)):
-        composition = corpus.parse(pth)
+        # noinspection PyBroadException
+        try:
+            composition = corpus.parse(pth)
+        except Exception:
+            print('Skipping', pth, 'because it is corrupt...')
+            continue
         cache_file = os.path.splitext(composition.metadata.corpusFilePath)[0]
         if ExternalCorpus is not None and cache_file.startswith(ExternalCorpus):
             cache_file = cache_file[len(ExternalCorpus) + 1:]
@@ -63,7 +67,9 @@ def rebuild_cache():
             cache_file = cache_file_clean
             cache_file_clean = cache_file.replace('__', '_')
         cache_file = cache_file.lower()
-        cache_file = os.path.join(cache_dir, cache_file + '.json')
+        cache_file = os.path.join(CacheRoot, cache_file + '.json')
+        if os.path.exists(cache_file):
+            continue
         cache_dict = {}
         parts = instrument.partitionByInstrument(composition)
         for part in parts:
