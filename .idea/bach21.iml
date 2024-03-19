@@ -6,6 +6,7 @@
       <excludeFolder url="file://$MODULE_DIR$/data" />
       <excludeFolder url="file://$MODULE_DIR$/bach21db" />
       <excludeFolder url="file://$MODULE_DIR$/bach21cache" />
+      <excludeFolder url="file://$MODULE_DIR$/bach21data" />
     </content>
     <orderEntry type="jdk" jdkName="bach" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
