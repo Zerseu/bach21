@@ -1,12 +1,15 @@
 import json
 import os.path
+import random
 
 import music21.note
 from music21 import *
 from tqdm import tqdm
 
 DataRoot: str = 'bach21data'
-FilterMatches: bool = True
+FilterParts: bool = False
+FilterRests: bool = True
+random.seed(0)
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
@@ -19,21 +22,25 @@ def get_dir(composer: str, instruments: [str]) -> str:
     return crt_dir
 
 
-def lcs(a: [float], b: [float]) -> int:
-    m = len(a)
-    n = len(b)
-    aux = [[0 for _ in range(n + 1)] for _ in range(m + 1)]
-    ret = 0
-    for i in range(m + 1):
-        for j in range(n + 1):
-            if i == 0 or j == 0:
-                aux[i][j] = 0
-            elif a[i - 1] == b[j - 1]:
-                aux[i][j] = aux[i - 1][j - 1] + 1
-                ret = max(ret, aux[i][j])
+def lcs(a: [float], b: [float]) -> [float]:
+    m, n = len(a), len(b)
+    if m == 0 or n == 0:
+        return []
+    dp = [[0] * (n + 1) for _ in range(2)]
+    length = 0
+    end_index = 0
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i % 2][j] = dp[(i - 1) % 2][j - 1] + 1
+                if dp[i % 2][j] > length:
+                    length = dp[i % 2][j]
+                    end_index = i
             else:
-                aux[i][j] = 0
-    return ret
+                dp[i % 2][j] = 0
+    if length == 0:
+        return []
+    return a[end_index - length: end_index]
 
 
 def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
@@ -54,8 +61,9 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     num_durations = []
 
     print('Parsing cached corpus...')
-    for root, dirs, files in tqdm(os.walk('bach21cache')):
-        for file_pth in sorted(files):
+    for root, dirs, files in os.walk('bach21cache'):
+        random.shuffle(files)
+        for file_pth in files:
             full_pth = os.path.join(root, file_pth)
             if full_pth.endswith('.json'):
                 if composer.lower() in file_pth.lower():
@@ -68,7 +76,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                                     num_durations.append(parts[part][1])
     print('Done parsing cached corpus...')
 
-    if FilterMatches:
+    if FilterParts:
         print('Excluding duplicate parts...')
         length = len(num_pitches)
         done = False
@@ -93,7 +101,7 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
             if ok:
                 for idy in range(idx):
                     if valid[idy]:
-                        if lcs(num_pitches[idx], num_pitches[idy]) / min(len(num_pitches[idx]), len(num_pitches[idy])) > 0.75:
+                        if len(lcs(num_pitches[idx], num_pitches[idy])) / min(len(num_pitches[idx]), len(num_pitches[idy])) > 0.75:
                             ok = False
                             break
             if not ok:
@@ -104,23 +112,20 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         print('Excluded', invalid, 'parts!')
         print('Done excluding duplicate parts...')
 
-    # random.shuffle(matches)
-
     str_pitches = []
-    for pitches in num_pitches:
-        for element in pitches:
-            if element == 0:
-                str_pitches.append('RST')
-            else:
-                str_pitches.append(str(music21.note.Note(element).nameWithOctave))
-        str_pitches.append('SIG')
-
     str_durations = []
-    for durations in num_durations:
-        for element in durations:
-            str_durations.append(str(music21.duration.Duration(element).quarterLength))
+    for pitches, durations in zip(num_pitches, num_durations):
+        for e_pitch, e_duration in zip(pitches, durations):
+            if e_pitch == 0:
+                if FilterRests:
+                    continue
+                else:
+                    str_pitches.append('RST')
+            else:
+                str_pitches.append(str(music21.note.Note(e_pitch).nameWithOctave))
+            str_durations.append(str(music21.duration.Duration(e_duration).quarterLength))
+        str_pitches.append('SIG')
         str_durations.append('SIG')
-
     assert len(str_pitches) == len(str_durations)
 
     length = min(len(str_pitches), len(str_durations))
