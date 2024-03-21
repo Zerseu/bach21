@@ -7,17 +7,19 @@ import numpy as np
 import tensorflow as tf
 from keras import Input
 from keras.callbacks import CSVLogger
-from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, LSTM, GRU
+from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, LSTM
 from keras.models import load_model, Sequential
+from keras.src.losses import CategoricalCrossentropy
+from keras.src.metrics import CategoricalAccuracy
+from keras.src.optimizers import Adam
 from keras.utils import to_categorical
 
 from config import Config
 from data import get_dir, generate_input, generate_output
 
-seed = 0
-random.seed(seed)
-np.random.seed(seed)
-tf.random.set_seed(seed)
+random.seed(0)
+np.random.seed(0)
+tf.random.set_seed(0)
 
 cfg = Config().config
 predictions = 1000
@@ -66,13 +68,13 @@ class BDLSTM:
         model = Sequential()
         model.add(Input(name='input', shape=(cfg[kind]['number_of_steps'],)))
         model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
-        model.add(GRU(name='gru_1', units=cfg[kind]['hidden_size'], return_sequences=True))
         model.add(LSTM(name='lstm', units=cfg[kind]['hidden_size'], return_sequences=True))
-        model.add(GRU(name='gru_2', units=cfg[kind]['hidden_size'], return_sequences=True))
-        model.add(Dropout(name='dropout', rate=0.5))
+        model.add(Dropout(name='dropout', rate=0.25))
         model.add(TimeDistributed(name='time_dist_dense', layer=Dense(name='dense', units=vocabulary_size)))
         model.add(Activation(name='activation', activation='softmax'))
-        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+        model.compile(optimizer=Adam(),
+                      loss=CategoricalCrossentropy(),
+                      metrics=[CategoricalAccuracy()])
 
         logger = CSVLogger(filename=os.path.join(crt_dir, kind + '_log.csv'),
                            separator=',',
