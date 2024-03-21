@@ -6,8 +6,8 @@ import sys
 import numpy as np
 import tensorflow as tf
 from keras import Input
-from keras.callbacks import ModelCheckpoint, CSVLogger
-from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, Bidirectional, LSTM, GRU
+from keras.callbacks import CSVLogger
+from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, LSTM, GRU
 from keras.models import load_model, Sequential
 from keras.utils import to_categorical
 
@@ -64,20 +64,16 @@ class BDLSTM:
                                                     skip_step=cfg[kind]['number_of_steps'])
 
         model = Sequential()
-        model.add(Input(shape=(cfg[kind]['number_of_steps'],)))
-        model.add(Embedding(input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
-        model.add(GRU(units=cfg[kind]['hidden_size'], return_sequences=True))
-        model.add(Bidirectional(LSTM(units=cfg[kind]['hidden_size'], return_sequences=True)))
-        model.add(GRU(units=cfg[kind]['hidden_size'], return_sequences=True))
-        model.add(Dropout(rate=0.5))
-        model.add(TimeDistributed(Dense(units=vocabulary_size)))
-        model.add(Activation(activation='softmax'))
+        model.add(Input(name='input', shape=(cfg[kind]['number_of_steps'],)))
+        model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
+        model.add(GRU(name='gru_1', units=cfg[kind]['hidden_size'], return_sequences=True))
+        model.add(LSTM(name='lstm', units=cfg[kind]['hidden_size'], return_sequences=True))
+        model.add(GRU(name='gru_2', units=cfg[kind]['hidden_size'], return_sequences=True))
+        model.add(Dropout(name='dropout', rate=0.5))
+        model.add(TimeDistributed(name='time_dist_dense', layer=Dense(name='dense', units=vocabulary_size)))
+        model.add(Activation(name='activation', activation='softmax'))
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-        checkpoint = ModelCheckpoint(filepath=os.path.join(crt_dir, kind + '_{epoch:03d}.keras'),
-                                     monitor='val_loss',
-                                     verbose=1,
-                                     save_freq=int(1E9))
         logger = CSVLogger(filename=os.path.join(crt_dir, kind + '_log.csv'),
                            separator=',',
                            append=False)
@@ -91,7 +87,7 @@ class BDLSTM:
                       epochs=cfg[kind]['number_of_epochs'],
                       validation_data=validation_data_generator.generate(),
                       validation_steps=val_steps,
-                      callbacks=[checkpoint, logger])
+                      callbacks=[logger])
 
             model.save(os.path.join(crt_dir, kind + '_model.keras'))
 
