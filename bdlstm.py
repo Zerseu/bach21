@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import tensorflow as tf
+from keras import Input
 from keras.callbacks import ModelCheckpoint, CSVLogger
 from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, Bidirectional, LSTM, GRU
 from keras.models import load_model, Sequential
@@ -63,9 +64,8 @@ class BDLSTM:
                                                     skip_step=cfg[kind]['number_of_steps'])
 
         model = Sequential()
-        model.add(Embedding(input_dim=vocabulary_size,
-                            output_dim=cfg[kind]['hidden_size'],
-                            input_length=cfg[kind]['number_of_steps']))
+        model.add(Input(shape=(cfg[kind]['number_of_steps'],)))
+        model.add(Embedding(input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
         model.add(GRU(units=cfg[kind]['hidden_size'], return_sequences=True))
         model.add(Bidirectional(LSTM(units=cfg[kind]['hidden_size'], return_sequences=True)))
         model.add(GRU(units=cfg[kind]['hidden_size'], return_sequences=True))
