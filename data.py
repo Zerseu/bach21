@@ -112,9 +112,14 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         print('Excluded', invalid, 'parts!')
         print('Done excluding duplicate parts...')
 
-    str_pitches = []
-    str_durations = []
+    train_pitches = []
+    train_durations = []
+    test_pitches = []
+    test_durations = []
+
     for pitches, durations in zip(num_pitches, num_durations):
+        str_pitches = []
+        str_durations = []
         for e_pitch, e_duration in zip(pitches, durations):
             if e_pitch == 0:
                 if FilterRests:
@@ -124,22 +129,25 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
             else:
                 str_pitches.append(str(music21.note.Note(e_pitch).nameWithOctave))
             str_durations.append(str(music21.duration.Duration(e_duration).quarterLength))
-        str_pitches.append('SIG')
-        str_durations.append('SIG')
-    assert len(str_pitches) == len(str_durations)
 
-    length = min(len(str_pitches), len(str_durations))
-    split_point = int(length * ratio)
+        split_point = int(min(len(str_pitches), len(str_durations)) * ratio)
+        train_pitches += str_pitches[:split_point]
+        train_durations += str_durations[:split_point]
+        test_pitches += str_pitches[split_point:]
+        test_durations += str_durations[split_point:]
+
+    assert len(train_pitches) == len(train_durations)
+    assert len(test_pitches) == len(test_durations)
 
     with open(pth_pitch_training, 'wt') as file:
-        file.write(' '.join(str_pitches[:split_point]))
+        file.write(' '.join(train_pitches))
     with open(pth_pitch_validation, 'wt') as file:
-        file.write(' '.join(str_pitches[split_point:]))
+        file.write(' '.join(test_pitches))
 
     with open(pth_duration_training, 'wt') as file:
-        file.write(' '.join(str_durations[:split_point]))
+        file.write(' '.join(train_durations))
     with open(pth_duration_validation, 'wt') as file:
-        file.write(' '.join(str_durations[split_point:]))
+        file.write(' '.join(test_durations))
     print('Done generating input data...')
 
 
