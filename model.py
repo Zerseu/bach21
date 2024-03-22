@@ -59,8 +59,8 @@ class Model:
             for key in cfg:
                 number_of_steps = max(number_of_steps, cfg[key]['number_of_steps'])
 
-            with open(os.path.join(crt_dir, kind + '_training.txt'), 'rt') as file:
-                inception = file.read().split(' ')[:number_of_steps]
+            with open(os.path.join(crt_dir, kind + '_input.txt'), 'rt') as file:
+                inception = file.read().split()[:number_of_steps]
 
             sentence_ids = [map_direct[element] for element in inception]
             sentence = inception
@@ -68,10 +68,9 @@ class Model:
                 if n % 100 == 0:
                     print('Prediction: ' + str(int(n / predictions * 100)) + '%')
 
-                i = np.zeros((1, cfg[kind]['number_of_steps']))
-                i[0] = np.array(sentence_ids[-cfg[kind]['number_of_steps']:])
-                prediction = model.predict(i)
-                o = np.argsort(prediction[:, cfg[kind]['number_of_steps'] - 1, :]).flatten()[::-1]
+                i = np.array(sentence_ids[-number_of_steps:], dtype=int).reshape((1, number_of_steps))
+                p = model.predict(i)
+                o = np.argsort(p[0])[::-1]
                 w = o[0]
 
                 sentence_ids.append(w)
