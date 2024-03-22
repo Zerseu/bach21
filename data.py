@@ -1,4 +1,5 @@
 import json
+import math
 import os.path
 import random
 
@@ -10,6 +11,30 @@ DataRoot: str = 'bach21data'
 FilterParts: bool = False
 FilterRests: bool = True
 random.seed(0)
+
+
+def note_to_freq(in_note: str) -> float:
+    notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    a4 = 440
+    a4_index = 9
+    a4_octave = 4
+    note_letter = in_note[:-1]
+    note_octave = int(in_note[-1])
+    note_index = notes.index(note_letter)
+    semitone_distance = (note_octave - a4_octave) * 12 + (note_index - a4_index)
+    return a4 * (2 ** (semitone_distance / 12))
+
+
+def freq_to_note(in_freq: float) -> str:
+    notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    a4 = 440
+    a4_index = 9
+    a4_octave = 4
+    semitone_distance = 12 * math.log(in_freq / a4) / math.log(2)
+    total_semitones_from_c0 = semitone_distance + (a4_index + (a4_octave * 12))
+    note_index = int(round(total_semitones_from_c0) % 12)
+    note_octave = int(round(total_semitones_from_c0) / 12)
+    return notes[note_index] + str(note_octave)
 
 
 def get_dir(composer: str, instruments: [str]) -> str:
