@@ -12,6 +12,7 @@ from keras.metrics import CategoricalAccuracy
 from keras.models import load_model, Sequential
 from keras.optimizers import Adam
 from keras.utils import to_categorical
+from tqdm import tqdm
 
 from config import Config
 from data import get_dir, generate_input, generate_output
@@ -64,17 +65,11 @@ class Model:
 
             sentence_ids = [map_direct[element] for element in inception]
             sentence = inception
-            for n in range(predictions):
-                if n % 100 == 0:
-                    print('Prediction: ' + str(int(n / predictions * 100)) + '%')
-
+            for _ in tqdm(range(predictions)):
                 i = np.array(sentence_ids[-number_of_steps:], dtype=int).reshape((1, number_of_steps))
-                p = model.predict(i)
-                o = np.argsort(p[0])[::-1]
-                w = o[0]
-
-                sentence_ids.append(w)
-                sentence.append(map_reverse[w])
+                o = Model.__temp_predict__(model, i, cfg[kind]['temperature'])
+                sentence_ids.append(o)
+                sentence.append(map_reverse[o])
             sentence = ' '.join(sentence)
             with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
@@ -100,7 +95,7 @@ class Model:
         return map_direct
 
     @staticmethod
-    def __file_to_ids__(file: str, map_direct: dict) -> [[int]]:
+    def __file_to_idx__(file: str, map_direct: dict) -> [[int]]:
         data = []
         for sentence in Model.__read_sentences__(file):
             data.append([map_direct[word] for word in sentence])
@@ -111,7 +106,7 @@ class Model:
         crt_dir = get_dir(composer, instruments)
         pth = os.path.join(crt_dir, kind + '_input.txt')
         map_direct = Model.__build_vocabulary__(pth)
-        data = Model.__file_to_ids__(pth, map_direct)
+        data = Model.__file_to_idx__(pth, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
         return data, vocabulary_size, map_direct, map_reverse
@@ -128,6 +123,20 @@ class Model:
         y = np.array(y, dtype=int).reshape((-1, vocabulary_size))
         assert len(x) == len(y)
         return x, y
+
+    @staticmethod
+    def __temp_sample__(preds, temp=1.0):
+        preds = np.asarray(preds).astype('float64')
+        preds = np.log(preds + 1e-9) / temp
+        exp_preds = np.exp(preds)
+        preds = exp_preds / np.sum(exp_preds)
+        probs = np.random.multinomial(1, preds, 1)
+        return np.argmax(probs)
+
+    @staticmethod
+    def __temp_predict__(model, seq, temp=1.0):
+        preds = model.predict(seq, verbose=0)[0]
+        return Model.__temp_sample__(preds, temp)
 
 
 def main(composer: str, instruments: [str]):
