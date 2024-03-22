@@ -117,24 +117,30 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
     test_pitches = []
     test_durations = []
 
-    for pitches, durations in zip(num_pitches, num_durations):
-        str_pitches = []
-        str_durations = []
-        for e_pitch, e_duration in zip(pitches, durations):
-            if e_pitch == 0:
-                if FilterRests:
-                    continue
-                else:
-                    str_pitches.append('RST')
-            else:
-                str_pitches.append(str(music21.note.Note(e_pitch).nameWithOctave))
-            str_durations.append(str(music21.duration.Duration(e_duration).quarterLength))
+    pth_pitches = os.path.join(crt_dir, 'pitch_nlp.txt')
+    pth_durations = os.path.join(crt_dir, 'duration_nlp.txt')
+    with open(pth_pitches, 'wt') as file_pitches:
+        with open(pth_durations, 'wt') as file_durations:
+            for pitches, durations in zip(num_pitches, num_durations):
+                str_pitches = []
+                str_durations = []
+                for e_pitch, e_duration in zip(pitches, durations):
+                    if e_pitch == 0:
+                        if FilterRests:
+                            continue
+                        else:
+                            str_pitches.append('RST')
+                    else:
+                        str_pitches.append(str(music21.note.Note(e_pitch).nameWithOctave))
+                    str_durations.append(str(music21.duration.Duration(e_duration).quarterLength))
+                file_pitches.write(' '.join(str_pitches) + '\n')
+                file_durations.write(' '.join(str_durations) + '\n')
 
-        split_point = int(min(len(str_pitches), len(str_durations)) * ratio)
-        train_pitches += str_pitches[:split_point]
-        train_durations += str_durations[:split_point]
-        test_pitches += str_pitches[split_point:]
-        test_durations += str_durations[split_point:]
+                split_point = int(min(len(str_pitches), len(str_durations)) * ratio)
+                train_pitches += str_pitches[:split_point]
+                train_durations += str_durations[:split_point]
+                test_pitches += str_pitches[split_point:]
+                test_durations += str_durations[split_point:]
 
     assert len(train_pitches) == len(train_durations)
     assert len(test_pitches) == len(test_durations)

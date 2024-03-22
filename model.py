@@ -3,13 +3,12 @@ import os
 import random
 import sys
 
-import keras_nlp
 import numpy as np
 import tensorflow as tf
 from keras.callbacks import CSVLogger
 from keras.layers import Dense, Embedding, LSTM, SpatialDropout1D
 from keras.losses import CategoricalCrossentropy
-from keras.metrics import Accuracy
+from keras.metrics import CategoricalAccuracy
 from keras.models import load_model, Sequential
 from keras.optimizers import Adam
 from keras.utils import to_categorical
@@ -25,77 +24,30 @@ cfg = Config().config
 predictions = 1000
 
 
-class WhitespaceTokenizer(keras_nlp.tokenizers.Tokenizer):
-    def tokenize(self, inputs, **kwargs):
-        return tf.strings.split(inputs)
-
-    def detokenize(self, inputs, **kwargs):
-        return tf.strings.reduce_join(inputs, separator=' ', axis=-1)
-
-
-class CustomModelGenerator(object):
-    def __init__(self, data: [int], number_of_steps: int, batch_size: int, vocabulary_size: int, skip_step: int):
-        self.data = data
-        self.number_of_steps = number_of_steps
-        self.batch_size = batch_size
-        self.vocabulary_size = vocabulary_size
-        self.current_index = 0
-        self.skip_step = skip_step
-
-    def generate(self) -> (np.ndarray, np.ndarray):
-        x = np.zeros((self.batch_size, self.number_of_steps))
-        y = np.zeros((self.batch_size, self.number_of_steps, self.vocabulary_size))
-        while True:
-            for i in range(self.batch_size):
-                if self.current_index + self.number_of_steps >= len(self.data):
-                    self.current_index = 0
-                x[i, :] = self.data[self.current_index:self.current_index + self.number_of_steps]
-                temp = self.data[self.current_index + 1:self.current_index + self.number_of_steps + 1]
-                y[i, :, :] = to_categorical(temp, num_classes=self.vocabulary_size)
-                self.current_index += self.skip_step
-            yield x, y
-
-
-class CustomModel:
+class Model:
     def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
         crt_dir = get_dir(composer, instruments)
 
-        training_data, validation_data, vocabulary_size, map_direct, map_reverse = CustomModel.__load_data__(composer, instruments, kind)
-
-        training_data_generator = CustomModelGenerator(training_data,
-                                                       cfg[kind]['number_of_steps'],
-                                                       cfg[kind]['batch_size'],
-                                                       vocabulary_size,
-                                                       skip_step=cfg[kind]['number_of_steps'])
-        validation_data_generator = CustomModelGenerator(validation_data,
-                                                         cfg[kind]['number_of_steps'],
-                                                         cfg[kind]['batch_size'],
-                                                         vocabulary_size,
-                                                         skip_step=cfg[kind]['number_of_steps'])
+        data, vocabulary_size, map_direct, map_reverse = Model.__load_data__(composer, instruments, kind)
+        x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'], vocabulary_size)
 
         model = Sequential()
-        model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size'], input_length=cfg[kind]['number_of_steps']))
-        model.add(SpatialDropout1D(name='dropout', rate=0.25))
+        model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
+        model.add(SpatialDropout1D(name='dropout', rate=0.2))
         model.add(LSTM(name='lstm_1', units=cfg[kind]['hidden_size'], return_sequences=True))
         model.add(LSTM(name='lstm_2', units=cfg[kind]['hidden_size'], return_sequences=False))
         model.add(Dense(name='dense', units=vocabulary_size, activation='softmax'))
-        model.compile(optimizer=Adam(),
-                      loss=CategoricalCrossentropy(),
-                      metrics=[Accuracy()])
+        model.compile(optimizer=Adam(), loss=CategoricalCrossentropy(), metrics=[CategoricalAccuracy()])
 
         logger = CSVLogger(filename=os.path.join(crt_dir, kind + '_log.csv'),
                            separator=',',
                            append=False)
 
         if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.keras')):
-            trn_steps = len(training_data) // (cfg[kind]['batch_size'] * cfg[kind]['number_of_steps'])
-            val_steps = len(validation_data) // (cfg[kind]['batch_size'] * cfg[kind]['number_of_steps'])
-
-            model.fit(training_data_generator.generate(),
-                      steps_per_epoch=trn_steps,
+            model.fit(x=x, y=y,
+                      batch_size=cfg[kind]['batch_size'],
                       epochs=cfg[kind]['number_of_epochs'],
-                      validation_data=validation_data_generator.generate(),
-                      validation_steps=val_steps,
+                      validation_split=0.2,
                       callbacks=[logger])
 
             model.save(os.path.join(crt_dir, kind + '_model.keras'))
@@ -122,41 +74,25 @@ class CustomModel:
                 o = np.argsort(prediction[:, cfg[kind]['number_of_steps'] - 1, :]).flatten()[::-1]
                 w = o[0]
 
-                # Note: implement temperature mechanism here...
-
                 sentence_ids.append(w)
                 sentence.append(map_reverse[w])
-
             sentence = ' '.join(sentence)
             with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
 
     @staticmethod
-    def __clamp_01__(x: float) -> float:
-        if x < 0:
-            return 0
-        if x > 1:
-            return 1
-        return x
+    def __read_sentences__(pth: str) -> [[str]]:
+        data = []
+        with open(pth, 'rt') as file:
+            for sentence in file.read().split('\n'):
+                data.append(sentence.split(' '))
+        return data
 
     @staticmethod
-    def __gen_eps__() -> float:
-        return random.random() * 1E-3
-
-    @staticmethod
-    def __read_words__(training_path: str = None, validation_path: str = None) -> [str]:
-        all_words = []
-        if training_path is not None:
-            with open(training_path, 'rt') as file:
-                all_words += file.read().split(' ')
-        if validation_path is not None:
-            with open(validation_path, 'rt') as file:
-                all_words += file.read().split(' ')
-        return all_words
-
-    @staticmethod
-    def __build_vocabulary__(training_path: str, validation_path: str) -> dict:
-        data = CustomModel.__read_words__(training_path, validation_path)
+    def __build_vocabulary__(pth: str) -> dict:
+        data = []
+        for sentence in Model.__read_sentences__(pth):
+            data += [word for word in sentence]
         counter = collections.Counter(data)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         elements, _ = list(zip(*count_pairs))
@@ -164,29 +100,42 @@ class CustomModel:
         return map_direct
 
     @staticmethod
-    def __file_to_ids__(file: str, map_direct: dict) -> [int]:
-        data = CustomModel.__read_words__(file)
-        return [map_direct[element] for element in data]
+    def __file_to_ids__(file: str, map_direct: dict) -> [[int]]:
+        data = []
+        for sentence in Model.__read_sentences__(file):
+            data.append([map_direct[word] for word in sentence])
+        return data
 
     @staticmethod
-    def __load_data__(composer: str, instruments: [str], kind: str) -> ([int], [int], int, dict, dict):
+    def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict, dict):
         crt_dir = get_dir(composer, instruments)
-        training_path = os.path.join(crt_dir, kind + '_training.txt')
-        validation_path = os.path.join(crt_dir, kind + '_validation.txt')
-        map_direct = CustomModel.__build_vocabulary__(training_path, validation_path)
-        training_data = CustomModel.__file_to_ids__(training_path, map_direct)
-        validation_data = CustomModel.__file_to_ids__(validation_path, map_direct)
+        pth = os.path.join(crt_dir, kind + '_nlp.txt')
+        map_direct = Model.__build_vocabulary__(pth)
+        data = Model.__file_to_ids__(pth, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
-        return training_data, validation_data, vocabulary_size, map_direct, map_reverse
+        return data, vocabulary_size, map_direct, map_reverse
+
+    @staticmethod
+    def __generate_xy__(data: [[int]], number_of_steps: int, vocabulary_size: int) -> (np.ndarray, np.ndarray):
+        x = []
+        y = []
+        for crt_idx_sentence in range(len(data)):
+            for crt_idx_word in range(len(data[crt_idx_sentence]) - number_of_steps):
+                x.append(data[crt_idx_sentence][crt_idx_word:crt_idx_word + number_of_steps])
+                y.append(to_categorical(data[crt_idx_sentence][crt_idx_word + number_of_steps], vocabulary_size))
+        x = np.array(x, dtype=int).reshape((-1, number_of_steps))
+        y = np.array(y, dtype=int).reshape((-1, vocabulary_size))
+        assert len(x) == len(y)
+        return x, y
 
 
 def main(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg:
-        CustomModel(composer=composer, instruments=instruments, kind=kind, mode='train')
+        Model(composer=composer, instruments=instruments, kind=kind, mode='train')
     for kind in cfg:
-        CustomModel(composer=composer, instruments=instruments, kind=kind, mode='test')
+        Model(composer=composer, instruments=instruments, kind=kind, mode='test')
     generate_output(composer, instruments)
 
 
