@@ -85,7 +85,7 @@ class Model:
         data = []
         with open(pth, 'rt') as file:
             for sentence in file.read().split('\n'):
-                data.append(sentence.split(' '))
+                data.append(sentence.split())
         return data
 
     @staticmethod
@@ -97,6 +97,7 @@ class Model:
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         elements, _ = list(zip(*count_pairs))
         map_direct = dict(zip(elements, range(len(elements))))
+        assert '' not in map_direct
         return map_direct
 
     @staticmethod
@@ -109,7 +110,7 @@ class Model:
     @staticmethod
     def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict, dict):
         crt_dir = get_dir(composer, instruments)
-        pth = os.path.join(crt_dir, kind + '_nlp.txt')
+        pth = os.path.join(crt_dir, kind + '_input.txt')
         map_direct = Model.__build_vocabulary__(pth)
         data = Model.__file_to_ids__(pth, map_direct)
         vocabulary_size = len(map_direct)

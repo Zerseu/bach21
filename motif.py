@@ -19,10 +19,9 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
         generate_input(composer, instruments)
 
         pitches = []
-        with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
-            pitches += file.read().split(' ')
-        with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
-            pitches += file.read().split(' ')
+        with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
+            for word in file.read().split():
+                pitches.append(word)
 
         sig_raw = []
         for p in pitches:
@@ -57,11 +56,11 @@ def query_all(composer: str, instruments: [str]):
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
         generate_input(composer, instruments)
+
         pitches = []
-        with open(os.path.join(crt_dir, 'pitch_training.txt'), 'rt') as file:
-            pitches += file.read().split(' ')
-        with open(os.path.join(crt_dir, 'pitch_validation.txt'), 'rt') as file:
-            pitches += file.read().split(' ')
+        with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
+            for word in file.read().split():
+                pitches.append(word)
 
         print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_inc)
         motifs = {}

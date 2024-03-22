@@ -43,18 +43,12 @@ def lcs(a: [float], b: [float]) -> [float]:
     return a[end_index - length: end_index]
 
 
-def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
+def generate_input(composer: str, instruments: [str]):
     crt_dir = get_dir(composer, instruments)
-
-    pth_pitch_training = os.path.join(crt_dir, 'pitch_training.txt')
-    pth_pitch_validation = os.path.join(crt_dir, 'pitch_validation.txt')
-
-    pth_duration_training = os.path.join(crt_dir, 'duration_training.txt')
-    pth_duration_validation = os.path.join(crt_dir, 'duration_validation.txt')
-
-    if os.path.exists(pth_pitch_training) and os.path.exists(pth_pitch_validation):
-        if os.path.exists(pth_duration_training) and os.path.exists(pth_duration_validation):
-            return
+    pth_pitches = os.path.join(crt_dir, 'pitch_input.txt')
+    pth_durations = os.path.join(crt_dir, 'duration_input.txt')
+    if os.path.exists(pth_pitches) and os.path.exists(pth_durations):
+        return
 
     print('Generating input data...')
     num_pitches = []
@@ -112,13 +106,6 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
         print('Excluded', invalid, 'parts!')
         print('Done excluding duplicate parts...')
 
-    train_pitches = []
-    train_durations = []
-    test_pitches = []
-    test_durations = []
-
-    pth_pitches = os.path.join(crt_dir, 'pitch_nlp.txt')
-    pth_durations = os.path.join(crt_dir, 'duration_nlp.txt')
     with open(pth_pitches, 'wt') as file_pitches:
         with open(pth_durations, 'wt') as file_durations:
             for pitches, durations in zip(num_pitches, num_durations):
@@ -133,27 +120,9 @@ def generate_input(composer: str, instruments: [str], ratio: float = 0.8):
                     else:
                         str_pitches.append(str(music21.note.Note(e_pitch).nameWithOctave))
                     str_durations.append(str(music21.duration.Duration(e_duration).quarterLength))
+                assert len(str_pitches) == len(str_durations)
                 file_pitches.write(' '.join(str_pitches) + '\n')
                 file_durations.write(' '.join(str_durations) + '\n')
-
-                split_point = int(min(len(str_pitches), len(str_durations)) * ratio)
-                train_pitches += str_pitches[:split_point]
-                train_durations += str_durations[:split_point]
-                test_pitches += str_pitches[split_point:]
-                test_durations += str_durations[split_point:]
-
-    assert len(train_pitches) == len(train_durations)
-    assert len(test_pitches) == len(test_durations)
-
-    with open(pth_pitch_training, 'wt') as file:
-        file.write(' '.join(train_pitches))
-    with open(pth_pitch_validation, 'wt') as file:
-        file.write(' '.join(test_pitches))
-
-    with open(pth_duration_training, 'wt') as file:
-        file.write(' '.join(train_durations))
-    with open(pth_duration_validation, 'wt') as file:
-        file.write(' '.join(test_durations))
     print('Done generating input data...')
 
 
