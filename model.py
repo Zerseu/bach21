@@ -3,15 +3,15 @@ import os
 import random
 import sys
 
+import keras_nlp
 import numpy as np
 import tensorflow as tf
-from keras import Input
 from keras.callbacks import CSVLogger
-from keras.layers import Activation, Dense, Dropout, Embedding, TimeDistributed, LSTM
+from keras.layers import Dense, Embedding, LSTM, SpatialDropout1D
+from keras.losses import CategoricalCrossentropy
+from keras.metrics import Accuracy
 from keras.models import load_model, Sequential
-from keras.src.losses import CategoricalCrossentropy
-from keras.src.metrics import CategoricalAccuracy
-from keras.src.optimizers import Adam
+from keras.optimizers import Adam
 from keras.utils import to_categorical
 
 from config import Config
@@ -25,7 +25,15 @@ cfg = Config().config
 predictions = 1000
 
 
-class BDLSTMGenerator(object):
+class WhitespaceTokenizer(keras_nlp.tokenizers.Tokenizer):
+    def tokenize(self, inputs, **kwargs):
+        return tf.strings.split(inputs)
+
+    def detokenize(self, inputs, **kwargs):
+        return tf.strings.reduce_join(inputs, separator=' ', axis=-1)
+
+
+class CustomModelGenerator(object):
     def __init__(self, data: [int], number_of_steps: int, batch_size: int, vocabulary_size: int, skip_step: int):
         self.data = data
         self.number_of_steps = number_of_steps
@@ -48,33 +56,32 @@ class BDLSTMGenerator(object):
             yield x, y
 
 
-class BDLSTM:
+class CustomModel:
     def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
         crt_dir = get_dir(composer, instruments)
 
-        training_data, validation_data, vocabulary_size, map_direct, map_reverse = BDLSTM.__load_data__(composer, instruments, kind)
+        training_data, validation_data, vocabulary_size, map_direct, map_reverse = CustomModel.__load_data__(composer, instruments, kind)
 
-        training_data_generator = BDLSTMGenerator(training_data,
-                                                  cfg[kind]['number_of_steps'],
-                                                  cfg[kind]['batch_size'],
-                                                  vocabulary_size,
-                                                  skip_step=cfg[kind]['number_of_steps'])
-        validation_data_generator = BDLSTMGenerator(validation_data,
-                                                    cfg[kind]['number_of_steps'],
-                                                    cfg[kind]['batch_size'],
-                                                    vocabulary_size,
-                                                    skip_step=cfg[kind]['number_of_steps'])
+        training_data_generator = CustomModelGenerator(training_data,
+                                                       cfg[kind]['number_of_steps'],
+                                                       cfg[kind]['batch_size'],
+                                                       vocabulary_size,
+                                                       skip_step=cfg[kind]['number_of_steps'])
+        validation_data_generator = CustomModelGenerator(validation_data,
+                                                         cfg[kind]['number_of_steps'],
+                                                         cfg[kind]['batch_size'],
+                                                         vocabulary_size,
+                                                         skip_step=cfg[kind]['number_of_steps'])
 
         model = Sequential()
-        model.add(Input(name='input', shape=(cfg[kind]['number_of_steps'],)))
-        model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
-        model.add(LSTM(name='lstm', units=cfg[kind]['hidden_size'], return_sequences=True))
-        model.add(Dropout(name='dropout', rate=0.25))
-        model.add(TimeDistributed(name='time_dist_dense', layer=Dense(name='dense', units=vocabulary_size)))
-        model.add(Activation(name='activation', activation='softmax'))
+        model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size'], input_length=cfg[kind]['number_of_steps']))
+        model.add(SpatialDropout1D(name='dropout', rate=0.25))
+        model.add(LSTM(name='lstm_1', units=cfg[kind]['hidden_size'], return_sequences=True))
+        model.add(LSTM(name='lstm_2', units=cfg[kind]['hidden_size'], return_sequences=False))
+        model.add(Dense(name='dense', units=vocabulary_size, activation='softmax'))
         model.compile(optimizer=Adam(),
                       loss=CategoricalCrossentropy(),
-                      metrics=[CategoricalAccuracy()])
+                      metrics=[Accuracy()])
 
         logger = CSVLogger(filename=os.path.join(crt_dir, kind + '_log.csv'),
                            separator=',',
@@ -113,14 +120,9 @@ class BDLSTM:
                 i[0] = np.array(sentence_ids[-cfg[kind]['number_of_steps']:])
                 prediction = model.predict(i)
                 o = np.argsort(prediction[:, cfg[kind]['number_of_steps'] - 1, :]).flatten()[::-1]
+                w = o[0]
 
-                eps = 1E-3
-                rnd = BDLSTM.__clamp_01__(random.random() + eps)
-                base = cfg[kind]['temperature']
-                idx = 0
-                while not (1.0 / pow(base, idx + 1) < rnd <= 1.0 / pow(base, idx)) and idx < vocabulary_size - 1:
-                    idx += 1
-                w = o[idx]
+                # Note: implement temperature mechanism here...
 
                 sentence_ids.append(w)
                 sentence.append(map_reverse[w])
@@ -154,7 +156,7 @@ class BDLSTM:
 
     @staticmethod
     def __build_vocabulary__(training_path: str, validation_path: str) -> dict:
-        data = BDLSTM.__read_words__(training_path, validation_path)
+        data = CustomModel.__read_words__(training_path, validation_path)
         counter = collections.Counter(data)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         elements, _ = list(zip(*count_pairs))
@@ -163,7 +165,7 @@ class BDLSTM:
 
     @staticmethod
     def __file_to_ids__(file: str, map_direct: dict) -> [int]:
-        data = BDLSTM.__read_words__(file)
+        data = CustomModel.__read_words__(file)
         return [map_direct[element] for element in data]
 
     @staticmethod
@@ -171,9 +173,9 @@ class BDLSTM:
         crt_dir = get_dir(composer, instruments)
         training_path = os.path.join(crt_dir, kind + '_training.txt')
         validation_path = os.path.join(crt_dir, kind + '_validation.txt')
-        map_direct = BDLSTM.__build_vocabulary__(training_path, validation_path)
-        training_data = BDLSTM.__file_to_ids__(training_path, map_direct)
-        validation_data = BDLSTM.__file_to_ids__(validation_path, map_direct)
+        map_direct = CustomModel.__build_vocabulary__(training_path, validation_path)
+        training_data = CustomModel.__file_to_ids__(training_path, map_direct)
+        validation_data = CustomModel.__file_to_ids__(validation_path, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
         return training_data, validation_data, vocabulary_size, map_direct, map_reverse
@@ -182,9 +184,9 @@ class BDLSTM:
 def main(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg:
-        BDLSTM(composer=composer, instruments=instruments, kind=kind, mode='train')
+        CustomModel(composer=composer, instruments=instruments, kind=kind, mode='train')
     for kind in cfg:
-        BDLSTM(composer=composer, instruments=instruments, kind=kind, mode='test')
+        CustomModel(composer=composer, instruments=instruments, kind=kind, mode='test')
     generate_output(composer, instruments)
 
 
