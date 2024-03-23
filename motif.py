@@ -1,14 +1,14 @@
 import json
 import multiprocessing
 import os.path
-import sys
 
 import igraph as ig
+import networkx as nx
 import regex as re
-from music21 import pitch
 from tqdm import tqdm
 
 from data import get_dir, generate_input
+from netrd.laplacian_spectral_method import LaplacianSpectral
 
 
 def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):
@@ -18,29 +18,33 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
     if not os.path.exists(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length))):
         generate_input(composer, instruments)
 
-        pitches = []
+        sentences = []
         with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
-            for word in file.read().split():
-                pitches.append(word)
+            for sentence in file.read().split('\n'):
+                sentences.append([])
+                for word in sentence.split():
+                    if word != 'RST':
+                        sentences[-1].append(word)
 
-        sig_raw = []
-        for p in pitches:
-            if p != 'SIG' and p != 'RST':
-                sig_raw.append(pitch.Pitch(p).ps)
-        sig_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in sig_raw])
+        motifs: dict[str, int] = {}
+        visited: set[str] = set()
 
-        motifs = {}
-        for motif_start in range(len(sig_raw) - motif_length):
-            motif_raw = sig_raw[motif_start:motif_start + motif_length]
-            motif_str = ' '.join([pitch.Pitch(p).nameWithOctave for p in motif_raw])
-            if motif_str not in motifs:
-                motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
-                                                             special_only=False,
-                                                             literal_spaces=False),
-                                           string=sig_str,
-                                           overlapped=True))
-                if motif_occ >= 5:
-                    motifs[motif_str] = motif_occ
+        for sentence in sentences:
+            sentence_str = ' '.join(sentence)
+            for motif_start in range(len(sentence) - motif_length):
+                motif_str = ' '.join(sentence[motif_start:motif_start + motif_length])
+                if motif_str in visited:
+                    continue
+                visited.add(motif_str)
+
+                if motif_str not in motifs:
+                    motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
+                                                                 special_only=False,
+                                                                 literal_spaces=False),
+                                               string=sentence_str,
+                                               overlapped=True))
+                    if motif_occ >= 5:
+                        motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
@@ -64,7 +68,7 @@ def query_all(composer: str, instruments: [str]):
 
         print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_inc)
         motifs = {}
-        with multiprocessing.Pool(4) as pool:
+        with multiprocessing.Pool(multiprocessing.cpu_count() - 4) as pool:
             args = [(composer, instruments, motif_length) for motif_length in range(bound_lower_inc, bound_upper_inc + 1)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
@@ -123,21 +127,21 @@ def query_all(composer: str, instruments: [str]):
     print('Component plot complete...')
 
 
-# def query_distance(composer1: str, instruments1: [str],
-#                    composer2: str, instruments2: [str]) -> float:
-#     query_all(composer1, instruments1)
-#     query_all(composer2, instruments2)
-#
-#     dir1 = get_dir(composer1, instruments1)
-#     dir2 = get_dir(composer2, instruments2)
-#
-#     g1 = nx.read_gml(os.path.join(dir1, 'motifs.gml'))
-#     g2 = nx.read_gml(os.path.join(dir2, 'motifs.gml'))
-#
-#     dist_obj = LaplacianSpectral()
-#     return dist_obj.dist(g1, g2)
+def query_distance(composer1: str, instruments1: [str],
+                   composer2: str, instruments2: [str]) -> float:
+    query_all(composer1, instruments1)
+    query_all(composer2, instruments2)
+
+    dir1 = get_dir(composer1, instruments1)
+    dir2 = get_dir(composer2, instruments2)
+
+    g1 = nx.read_gml(os.path.join(dir1, 'motifs.gml'))
+    g2 = nx.read_gml(os.path.join(dir2, 'motifs.gml'))
+
+    dist_obj = LaplacianSpectral()
+    return dist_obj.dist(g1, g2)
 
 
 if __name__ == '__main__':
-    query_all(sys.argv[1], sys.argv[2:])
-    # print(query_distance('bach', ['violin'], 'bach', ['flute']))
+    print(query_distance('bach', ['violin'],
+                         'bach', ['violin']))

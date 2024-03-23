@@ -35,7 +35,7 @@ class Model:
 
         model = Sequential()
         model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
-        model.add(SpatialDropout1D(name='dropout', rate=0.2))
+        model.add(SpatialDropout1D(name='dropout', rate=0.5))
         model.add(LSTM(name='lstm_1', units=cfg[kind]['hidden_size'], return_sequences=True))
         model.add(LSTM(name='lstm_2', units=cfg[kind]['hidden_size'], return_sequences=False))
         model.add(Dense(name='dense', units=vocabulary_size, activation='softmax'))
@@ -49,7 +49,6 @@ class Model:
             model.fit(x=x, y=y,
                       batch_size=cfg[kind]['batch_size'],
                       epochs=cfg[kind]['number_of_epochs'],
-                      validation_split=0.2,
                       callbacks=[logger])
 
             model.save(os.path.join(crt_dir, kind + '_model.keras'))
