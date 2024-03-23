@@ -30,6 +30,7 @@ class Model:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Model.__load_data__(composer, instruments, kind)
+        print(kind, 'vocabulary size is', vocabulary_size)
         x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'], vocabulary_size)
 
         model = Sequential()
