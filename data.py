@@ -90,7 +90,7 @@ def generate_input(composer: str, instruments: [str]):
                         parts = json.load(file)
                         for part in parts:
                             for instr in instruments:
-                                if instr.lower() in part.lower() or instr.lower() in file_pth.lower():
+                                if instr.lower() in part.lower():
                                     num_pitches.append(parts[part][0])
                                     num_durations.append(parts[part][1])
     print('Done parsing cached corpus...')
@@ -178,8 +178,6 @@ def generate_output(composer: str, instruments: [str]):
         if length <= 0:
             continue
 
-        if pitches[i] == 'SIG':
-            continue
         elif pitches[i] == 'RST':
             element = note.Rest(length)
         else:
