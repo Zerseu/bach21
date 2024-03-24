@@ -38,28 +38,31 @@ public sealed class NoteGenerator : MonoBehaviour
 
     public AnimationCurve NoteStrength;
 
-    private static int Modulo(int x, int y)
+
+    private static double Note2Freq(string note)
     {
-        var z = x % y;
-        return z < 0 ? z + y : z;
+        string[] notes = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const double a4 = 440.0;
+        const int a4Index = 9;
+        const int a4Octave = 4;
+        var noteLetter = note[..^1];
+        var noteOctave = int.Parse(note[^1].ToString());
+        var noteIndex = Array.IndexOf(notes, noteLetter);
+        var semitoneDistance = (noteOctave - a4Octave) * 12.0 + (noteIndex - a4Index);
+        return a4 * Math.Pow(2, semitoneDistance / 12.0);
     }
 
-    private static string GetNote(double frequency)
+    private static string Freq2Note(double freq)
     {
-        var idx = (int)Math.Round(12.0 * Math.Log(frequency / ConcertPitch, 2.0) + 49.0);
-        return Notes[Modulo(idx - 1, 12)] + (idx + 8) / 12;
-    }
-
-    private static int HalfToneDistance(string note)
-    {
-        var oct = (byte)(note[^1] - '0');
-        var idx = Array.IndexOf(Notes, note[..^1]);
-        return idx >= 3 ? oct * 12 + idx - 3 : oct * 12 + idx + 9;
-    }
-
-    private static double GetFrequency(string note)
-    {
-        return ConcertPitch * Math.Pow(2.0, (HalfToneDistance(note) - 57.0) / 12.0);
+        string[] notes = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const double a4 = 440.0;
+        const int a4Index = 9;
+        const int a4Octave = 4;
+        var semitoneDistance = 12.0 * Math.Log(freq / a4) / Math.Log(2.0);
+        var totalSemitonesFromC0 = semitoneDistance + (a4Index + a4Octave * 12.0);
+        var noteIndex = (int)(Math.Round(totalSemitonesFromC0) % 12);
+        var noteOctave = (int)(Math.Round(totalSemitonesFromC0) / 12);
+        return notes[noteIndex] + noteOctave;
     }
 
     private static void RunUnitTest()
@@ -177,7 +180,7 @@ public sealed class NoteGenerator : MonoBehaviour
         };
 
         foreach (var f in frequency)
-            Assert.IsTrue(Math.Abs(GetFrequency(GetNote(f)) - f) <= 0.01);
+            Assert.IsTrue(Math.Abs(Note2Freq(Freq2Note(f)) - f) <= 0.01);
     }
 
     private void Start()
@@ -200,7 +203,7 @@ public sealed class NoteGenerator : MonoBehaviour
 
     private void PlayNote(string note)
     {
-        PlayNote((float)GetFrequency(note), DefaultDuration);
+        PlayNote((float)Note2Freq(note), DefaultDuration);
     }
 
     public void PlayNotes(params string[] notes)

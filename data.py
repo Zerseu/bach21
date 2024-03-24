@@ -31,7 +31,7 @@ def freq_to_note(in_freq: float) -> str:
     a4_index = 9
     a4_octave = 4
     semitone_distance = 12 * math.log(in_freq / a4) / math.log(2)
-    total_semitones_from_c0 = semitone_distance + (a4_index + (a4_octave * 12))
+    total_semitones_from_c0 = semitone_distance + (a4_index + a4_octave * 12)
     note_index = int(round(total_semitones_from_c0) % 12)
     note_octave = int(round(total_semitones_from_c0) / 12)
     return notes[note_index] + str(note_octave)
