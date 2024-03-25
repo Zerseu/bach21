@@ -1,4 +1,5 @@
 import json
+import math
 import multiprocessing
 import os.path
 
@@ -10,6 +11,9 @@ from tqdm import tqdm
 from data import get_dir, generate_input
 from netrd.laplacian_spectral_method import LaplacianSpectral
 
+LengthLowerBound: int = 8
+LengthUpperBound: int = 24
+
 
 def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):
     print('Examining motifs of length', motif_length)
@@ -19,15 +23,21 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
         generate_input(composer, instruments)
 
         sentences = []
+        total_units = 0
         with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
             for sentence in file.read().split('\n'):
                 sentences.append([])
                 for word in sentence.split():
                     if word != 'RST':
                         sentences[-1].append(word)
+                        total_units += 1
 
         motifs: dict[str, int] = {}
         visited: set[str] = set()
+
+        assert total_units >= 100
+        assert LengthLowerBound <= motif_length <= LengthUpperBound
+        motif_thr = math.log10(total_units) * math.log2(LengthUpperBound + 2 - motif_length)
 
         for sentence in sentences:
             sentence_str = ' '.join(sentence)
@@ -43,7 +53,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                                  literal_spaces=False),
                                                string=sentence_str,
                                                overlapped=True))
-                    if motif_occ >= 5:
+                    if motif_occ >= motif_thr:
                         motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -55,9 +65,6 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 def query_all(composer: str, instruments: [str], plot: bool = True):
     crt_dir = get_dir(composer, instruments)
 
-    bound_lower_inc = 8
-    bound_upper_inc = 24
-
     if not os.path.exists(os.path.join(crt_dir, 'motifs.gml')):
         generate_input(composer, instruments)
 
@@ -66,10 +73,10 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
             for word in file.read().split():
                 pitches.append(word)
 
-        print('Running parallel motif discovery from length', bound_lower_inc, 'to', bound_upper_inc)
+        print('Running parallel motif discovery from length', LengthLowerBound, 'to', LengthUpperBound)
         motifs = {}
         with multiprocessing.Pool(multiprocessing.cpu_count() - 4) as pool:
-            args = [(composer, instruments, motif_length) for motif_length in range(bound_lower_inc, bound_upper_inc + 1)]
+            args = [(composer, instruments, motif_length) for motif_length in range(LengthLowerBound, LengthUpperBound + 1)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
         print('Motif discovery complete...')
@@ -79,7 +86,7 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
         labels = []
         occurrences = []
         lengths = []
-        for motif_length in range(bound_lower_inc, bound_upper_inc + 1):
+        for motif_length in range(LengthLowerBound, LengthUpperBound + 1):
             vertices += len(motifs[motif_length])
             for motif in motifs[motif_length]:
                 labels.append(motif)
@@ -143,12 +150,19 @@ def query_distance(composer1: str, instruments1: [str],
     return dist_obj.dist(g1, g2)
 
 
-if __name__ == '__main__':
+def main():
     composers = ['bach', 'beethoven', 'mozart', 'paganini', 'vivaldi']
-    instruments = ['violin', 'soprano']
+    instruments = []
+    for composer in composers:
+        generate_input(composer, instruments)
+
     with open('distances.csv', 'wt') as csv:
         csv.write('Composer1, Composer2, Distance\n')
         for composer1 in composers:
             for composer2 in composers:
                 distance = query_distance(composer1, instruments, composer2, instruments)
                 csv.write('{}, {}, {}\n'.format(composer1, composer2, distance))
+
+
+if __name__ == '__main__':
+    main()

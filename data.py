@@ -89,10 +89,14 @@ def generate_input(composer: str, instruments: [str]):
                     with open(full_pth, 'rt') as file:
                         parts = json.load(file)
                         for part in parts:
-                            for instr in instruments:
-                                if instr.lower() in part.lower():
-                                    num_pitches.append(parts[part][0])
-                                    num_durations.append(parts[part][1])
+                            if len(instruments) == 0:
+                                num_pitches.append(parts[part][0])
+                                num_durations.append(parts[part][1])
+                            else:
+                                for instr in instruments:
+                                    if instr.lower() in part.lower():
+                                        num_pitches.append(parts[part][0])
+                                        num_durations.append(parts[part][1])
     print('Done parsing cached corpus...')
 
     if FilterParts:
@@ -131,6 +135,7 @@ def generate_input(composer: str, instruments: [str]):
         print('Excluded', invalid, 'parts!')
         print('Done excluding duplicate parts...')
 
+    total_units = 0
     with open(pth_pitches, 'wt') as file_pitches:
         with open(pth_durations, 'wt') as file_durations:
             for pitches, durations in zip(num_pitches, num_durations):
@@ -148,7 +153,9 @@ def generate_input(composer: str, instruments: [str]):
                 assert len(str_pitches) == len(str_durations)
                 file_pitches.write(' '.join(str_pitches) + '\n')
                 file_durations.write(' '.join(str_durations) + '\n')
+                total_units += len(str_pitches)
     print('Done generating input data...')
+    print(composer.upper(), 'data has', total_units, 'units...')
 
 
 def generate_output(composer: str, instruments: [str]):
