@@ -52,7 +52,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
         return motif_length, json.load(file)
 
 
-def query_all(composer: str, instruments: [str]):
+def query_all(composer: str, instruments: [str], plot: bool = True):
     crt_dir = get_dir(composer, instruments)
 
     bound_lower_inc = 8
@@ -103,34 +103,35 @@ def query_all(composer: str, instruments: [str]):
         g.save(os.path.join(crt_dir, 'motifs.gml'))
     g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
 
-    print('Plotting motif relationship top-10 connected components...')
-    g_comp = g.connected_components(mode='weak')
-    g_comp = [c for c in g_comp if len(c) > 1]
-    g_comp.sort(key=len, reverse=True)
-    for idx in tqdm(range(min(10, len(g_comp)))):
-        conn_comp = g.subgraph(g_comp[idx])
-        conn_comp.save(os.path.join(crt_dir, 'layout_{:02d}.gml'.format(idx)))
+    if plot:
+        print('Plotting motif relationship top-10 connected components...')
+        g_comp = g.connected_components(mode='weak')
+        g_comp = [c for c in g_comp if len(c) > 1]
+        g_comp.sort(key=len, reverse=True)
+        for idx in tqdm(range(min(10, len(g_comp)))):
+            conn_comp = g.subgraph(g_comp[idx])
+            conn_comp.save(os.path.join(crt_dir, 'layout_{:02d}.gml'.format(idx)))
 
-        ig.plot(obj=conn_comp,
-                target=os.path.join(crt_dir, 'layout_{:02d}.svg'.format(idx)),
-                palette=ig.GradientPalette('green', 'red'),
-                vertex_size=25,
-                vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['length'],
-                                                      out_range=(0, 255),
-                                                      clamp=True))),
-                bbox=(2 ** 13, 2 ** 13),
-                margin=2 ** 7)
+            ig.plot(obj=conn_comp,
+                    target=os.path.join(crt_dir, 'layout_{:02d}.svg'.format(idx)),
+                    palette=ig.GradientPalette('green', 'red'),
+                    vertex_size=25,
+                    vertex_color=list(map(int, ig.rescale(values=g.subgraph(g_comp[idx]).vs['length'],
+                                                          out_range=(0, 255),
+                                                          clamp=True))),
+                    bbox=(2 ** 13, 2 ** 13),
+                    margin=2 ** 7)
 
-        conn_comp_lout = conn_comp.layout('auto')
-        with open(os.path.join(crt_dir, 'layout_{:02d}.json'.format(idx)), 'wt') as file:
-            json.dump(conn_comp_lout.coords, file, indent=4, sort_keys=False)
-    print('Component plot complete...')
+            conn_comp_lout = conn_comp.layout('auto')
+            with open(os.path.join(crt_dir, 'layout_{:02d}.json'.format(idx)), 'wt') as file:
+                json.dump(conn_comp_lout.coords, file, indent=4, sort_keys=False)
+        print('Component plot complete...')
 
 
 def query_distance(composer1: str, instruments1: [str],
                    composer2: str, instruments2: [str]) -> float:
-    query_all(composer1, instruments1)
-    query_all(composer2, instruments2)
+    query_all(composer1, instruments1, False)
+    query_all(composer2, instruments2, False)
 
     dir1 = get_dir(composer1, instruments1)
     dir2 = get_dir(composer2, instruments2)
