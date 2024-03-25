@@ -143,5 +143,11 @@ def query_distance(composer1: str, instruments1: [str],
 
 
 if __name__ == '__main__':
-    print(query_distance('bach', ['violin'],
-                         'bach', ['violin']))
+    composers = ['bach', 'beethoven', 'brahms', 'chopin', 'mozart', 'paganini', 'palestrina', 'schumann', 'vivaldi']
+    instruments = ['violin', 'soprano']
+    with open('distances.csv', 'wt') as csv:
+        csv.write('Composer1, Composer2, Distance\n')
+        for composer1 in composers:
+            for composer2 in composers:
+                distance = query_distance(composer1, instruments, composer2, instruments)
+                csv.write('{}, {}, {}\n'.format(composer1, composer2, distance))
