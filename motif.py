@@ -1,5 +1,4 @@
 import json
-import math
 import multiprocessing
 import os.path
 
@@ -37,7 +36,6 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 
         assert total_units >= 100
         assert LengthLowerBound <= motif_length <= LengthUpperBound
-        motif_thr = math.log10(total_units) * math.log2(LengthUpperBound + 2 - motif_length)
 
         for sentence in sentences:
             sentence_str = ' '.join(sentence)
@@ -53,8 +51,9 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                                  literal_spaces=False),
                                                string=sentence_str,
                                                overlapped=True))
-                    if motif_occ >= motif_thr:
-                        motifs[motif_str] = motif_occ
+                    if motif_occ >= 2:
+                        if (motif_occ * motif_length) / total_units >= 0.0001:
+                            motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
