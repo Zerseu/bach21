@@ -5,10 +5,10 @@ import os.path
 import igraph as ig
 import networkx as nx
 import regex as re
+from netrd.distance.laplacian_spectral_method import LaplacianSpectral
 from tqdm import tqdm
 
 from data import get_dir, generate_input
-from netrd.laplacian_spectral_method import LaplacianSpectral
 
 LengthLowerBound: int = 8
 LengthUpperBound: int = 24
@@ -52,7 +52,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
                                                string=sentence_str,
                                                overlapped=True))
                     if motif_occ >= 2:
-                        if (motif_occ * motif_length) / total_units >= 0.0001:
+                        if (motif_occ * motif_length) / total_units >= 0.0005:
                             motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
@@ -156,11 +156,11 @@ def main():
         generate_input(composer, instruments)
 
     with open('distances.csv', 'wt') as csv:
-        csv.write('Composer1, Composer2, Distance\n')
+        csv.write('Composer1,Composer2,Distance\n')
         for composer1 in composers:
             for composer2 in composers:
                 distance = query_distance(composer1, instruments, composer2, instruments)
-                csv.write('{}, {}, {}\n'.format(composer1, composer2, distance))
+                csv.write('{},{},{}\n'.format(composer1, composer2, distance))
 
 
 if __name__ == '__main__':
