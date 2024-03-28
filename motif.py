@@ -4,8 +4,9 @@ import os.path
 
 import igraph as ig
 import networkx as nx
-import regex as re
+from music21 import *
 from netrd.distance.laplacian_spectral_method import LaplacianSpectral
+from suffix_tree import Tree
 from tqdm import tqdm
 
 from data import get_dir, generate_input
@@ -21,39 +22,35 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
     if not os.path.exists(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length))):
         generate_input(composer, instruments)
 
-        sentences = []
-        total_units = 0
+        pitches = []
         with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
             for sentence in file.read().split('\n'):
-                sentences.append([])
                 for word in sentence.split():
-                    if word != 'RST':
-                        sentences[-1].append(word)
-                        total_units += 1
+                    if word == 'RST':
+                        continue
+                    else:
+                        pitches.append(int(pitch.Pitch(word).ps))
+        assert len(pitches) >= 100
+        assert LengthLowerBound <= motif_length <= LengthUpperBound
 
         motifs: dict[str, int] = {}
         visited: set[str] = set()
+        stree = Tree({1: pitches})
 
-        assert total_units >= 100
-        assert LengthLowerBound <= motif_length <= LengthUpperBound
+        for motif_start in range(len(pitches) - motif_length):
+            motif_int: [int] = pitches[motif_start:motif_start + motif_length]
+            if motif_int.count(motif_int[0]) == len(motif_int):
+                continue
+            motif_str: str = ' '.join([pitch.Pitch(motif).nameWithOctave for motif in motif_int])
+            if motif_str in visited:
+                continue
+            visited.add(motif_str)
 
-        for sentence in sentences:
-            sentence_str = ' '.join(sentence)
-            for motif_start in range(len(sentence) - motif_length):
-                motif_str = ' '.join(sentence[motif_start:motif_start + motif_length])
-                if motif_str in visited:
-                    continue
-                visited.add(motif_str)
-
-                if motif_str not in motifs:
-                    motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
-                                                                 special_only=False,
-                                                                 literal_spaces=False),
-                                               string=sentence_str,
-                                               overlapped=True))
-                    if motif_occ >= 2:
-                        if (motif_occ * motif_length) / total_units >= 0.0005:
-                            motifs[motif_str] = motif_occ
+            if motif_str not in motifs:
+                motif_occ = len(stree.find_all(motif_int))
+                if motif_occ >= 2:
+                    if (motif_occ * motif_length) / len(pitches) >= 0.0005:
+                        motifs[motif_str] = motif_occ
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
