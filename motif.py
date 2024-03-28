@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 import os.path
+from collections import Counter
 
 import igraph as ig
 import networkx as nx
@@ -49,8 +50,11 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
             if motif_str not in motifs:
                 motif_occ = len(stree.find_all(motif_int))
                 if motif_occ >= 2:
-                    if (motif_occ * motif_length) / len(pitches) >= 0.0005:
+                    if (motif_occ * motif_length) / len(pitches) >= 1E-4:
                         motifs[motif_str] = motif_occ
+
+        counter = Counter(motifs)
+        motifs = dict(counter.most_common(100))
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
             json.dump(motifs, file, indent=4, sort_keys=True)
