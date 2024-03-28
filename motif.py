@@ -36,7 +36,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 
         motifs: dict[str, int] = {}
         visited: set[str] = set()
-        stree = Tree({1: pitches})
+        stree = Tree({0: pitches})
 
         for motif_start in range(len(pitches) - motif_length):
             motif_int: [int] = pitches[motif_start:motif_start + motif_length]
