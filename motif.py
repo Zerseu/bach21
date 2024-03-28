@@ -57,7 +57,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
         motifs = dict(counter.most_common(100))
 
         with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'wt') as file:
-            json.dump(motifs, file, indent=4, sort_keys=True)
+            json.dump(motifs, file, indent=4)
     with open(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length)), 'rt') as file:
         return motif_length, json.load(file)
 
@@ -131,7 +131,7 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
 
             conn_comp_lout = conn_comp.layout('auto')
             with open(os.path.join(crt_dir, 'layout_{:02d}.json'.format(idx)), 'wt') as file:
-                json.dump(conn_comp_lout.coords, file, indent=4, sort_keys=False)
+                json.dump(conn_comp_lout.coords, file, indent=4)
         print('Component plot complete...')
 
 
