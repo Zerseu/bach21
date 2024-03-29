@@ -1,40 +1,50 @@
 import collections
+import multiprocessing
 import os
-import random
 import sys
 
 import numpy as np
-import torch.nn as nn
+import torch
+from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
-from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
 
 from config import Config
 from data import get_dir, generate_input, generate_output
-
-random.seed(0)
-np.random.seed(0)
 
 cfg = Config().config
 predictions = 1000
 
 
-class ModelTorch(nn.Module):
-    def __init__(self, vocabulary_size, hidden_size):
-        super(ModelTorch, self).__init__()
-        self.embedding = nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
-        self.spatial_dropout = nn.Dropout(p=0.25)
-        self.lstm_1 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
-        self.lstm_2 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
-        self.dense = nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
+class TorchModule(Module):
+    def __init__(self, vocabulary_size: int, hidden_size: int):
+        super(TorchModule, self).__init__()
+        self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
+        self.spatial_dropout = torch.nn.Dropout(p=0.25)
+        self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
+        self.dense = torch.nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
 
-    def forward(self, x):
+    def forward(self, x: torch.LongTensor) -> torch.LongTensor:
         x = self.embedding(x)
         x = self.spatial_dropout(x)
-        x, _ = self.lstm_1(x)
-        x, _ = self.lstm_2(x)
+        x, _ = self.lstm(x)
         x = x[:, -1, :]
         x = self.dense(x)
         return x
+
+
+class TorchDataset(Dataset):
+    def __init__(self, x: np.ndarray, y: np.ndarray):
+        assert len(x) == len(y)
+        self.x = torch.from_numpy(x).long()
+        self.y = torch.from_numpy(y).long()
+
+    def __len__(self) -> int:
+        return min(len(self.x), len(self.y))
+
+    def __getitem__(self, idx: int) -> (torch.LongTensor, torch.LongTensor):
+        return self.x[idx], self.y[idx]
 
 
 class Model:
@@ -43,43 +53,24 @@ class Model:
 
         data, vocabulary_size, map_direct, map_reverse = Model.__load_data__(composer, instruments, kind)
         print(kind, 'vocabulary size is', vocabulary_size)
-        x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'], vocabulary_size)
+        x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'])
+        split = int(min(len(x), len(y)) * 0.8)
+        d_trn = TorchDataset(x[:split], y[:split])
+        d_val = TorchDataset(x[split:], y[split:])
 
-        model = ModelTorch(vocabulary_size=vocabulary_size, hidden_size=cfg[kind]['hidden_size'])
-        loss_function = nn.CrossEntropyLoss()
-        optimizer = Adam(model.parameters())
-
-        if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.keras')):
-            for epoch in tqdm(cfg[kind]['number_of_epochs']):
-
-
-            model.fit(x=x, y=y,
-                      batch_size=cfg[kind]['batch_size'],
-                      epochs=cfg[kind]['number_of_epochs'],
-                      callbacks=[logger])
-
-            model.save(os.path.join(crt_dir, kind + '_model.keras'))
+        if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.torch')):
+            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size'])
+            loss_function = CrossEntropyLoss()
+            optimizer = Adam(model.parameters())
+            cpu_count = multiprocessing.cpu_count() - 4
+            train_loader = DataLoader(dataset=d_trn, batch_size=cfg[kind]['batch_size'], num_workers=cpu_count, shuffle=True)
+            valid_loader = DataLoader(dataset=d_val, batch_size=cfg[kind]['batch_size'], num_workers=cpu_count)
+            Model.__train_model__(model, train_loader, valid_loader, loss_function, optimizer)
+            torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
 
         if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
-            model = load_model(os.path.join(crt_dir, kind + '_model.keras'))
-
-            number_of_steps = 0
-            for key in cfg:
-                number_of_steps = max(number_of_steps, cfg[key]['number_of_steps'])
-
-            with open(os.path.join(crt_dir, kind + '_input.txt'), 'rt') as file:
-                inception = file.read().split()[:number_of_steps]
-
-            sentence_ids = [map_direct[element] for element in inception]
-            sentence = inception
-            for _ in tqdm(range(predictions)):
-                i = np.array(sentence_ids[-number_of_steps:], dtype=int).reshape((1, number_of_steps))
-                o = Model.__temp_predict__(model, i, cfg[kind]['temperature'])
-                sentence_ids.append(o)
-                sentence.append(map_reverse[o])
-            sentence = ' '.join(sentence)
-            with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
-                file.write(sentence)
+            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size'])
+            model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
 
     @staticmethod
     def __read_sentences__(pth: str) -> [[str]]:
@@ -119,17 +110,49 @@ class Model:
         return data, vocabulary_size, map_direct, map_reverse
 
     @staticmethod
-    def __generate_xy__(data: [[int]], number_of_steps: int, vocabulary_size: int) -> (np.ndarray, np.ndarray):
+    def __generate_xy__(data: [[int]], number_of_steps: int) -> (np.ndarray, np.ndarray):
         x = []
         y = []
         for crt_idx_sentence in range(len(data)):
             for crt_idx_word in range(len(data[crt_idx_sentence]) - number_of_steps):
                 x.append(data[crt_idx_sentence][crt_idx_word:crt_idx_word + number_of_steps])
-                y.append(to_categorical(data[crt_idx_sentence][crt_idx_word + number_of_steps], vocabulary_size))
-        x = np.array(x, dtype=int).reshape((-1, number_of_steps))
-        y = np.array(y, dtype=int).reshape((-1, vocabulary_size))
+                y.append(data[crt_idx_sentence][crt_idx_word + number_of_steps])
+        x = np.array(x, dtype=int)
+        y = np.array(y, dtype=int)
         assert len(x) == len(y)
         return x, y
+
+    @staticmethod
+    def __train_model__(model: Module,
+                        train_loader: DataLoader,
+                        valid_loader: DataLoader,
+                        loss_function: CrossEntropyLoss,
+                        optimizer: Adam,
+                        num_epochs: int = 10):
+        for epoch in range(num_epochs):
+            model.train()
+            total_train_loss = 0
+            for inputs, labels in tqdm(train_loader):
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = loss_function(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                total_train_loss += loss.item()
+            sys.stderr.flush()
+
+            model.eval()
+            total_valid_loss = 0
+            with torch.no_grad():
+                for inputs, labels in tqdm(valid_loader):
+                    outputs = model(inputs)
+                    loss = loss_function(outputs, labels)
+                    total_valid_loss += loss.item()
+            sys.stderr.flush()
+
+            avg_train_loss = total_train_loss / len(train_loader)
+            avg_valid_loss = total_valid_loss / len(valid_loader)
+            print(f'Epoch {epoch + 1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Validation Loss: {avg_valid_loss:.4f}')
 
     @staticmethod
     def __temp_sample__(preds, temp=1.0):
