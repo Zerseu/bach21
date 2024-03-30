@@ -1,10 +1,8 @@
 import collections
 import os
-import random
 import sys
 
 import numpy as np
-import tensorflow as tf
 from keras.callbacks import CSVLogger
 from keras.layers import Dense, Embedding, LSTM, SpatialDropout1D
 from keras.losses import CategoricalCrossentropy
@@ -17,21 +15,17 @@ from tqdm import tqdm
 from config import Config
 from data import get_dir, generate_input, generate_output
 
-random.seed(0)
-np.random.seed(0)
-tf.random.set_seed(0)
-
 cfg = Config().config
 predictions = 1000
 
 
-class Model:
+class Worker:
     def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
         crt_dir = get_dir(composer, instruments)
 
-        data, vocabulary_size, map_direct, map_reverse = Model.__load_data__(composer, instruments, kind)
+        data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
         print(kind, 'vocabulary size is', vocabulary_size)
-        x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'], vocabulary_size)
+        x, y = Worker.__generate_xy__(data, cfg[kind]['number_of_steps'], vocabulary_size)
 
         model = Sequential()
         model.add(Embedding(name='embedding', input_dim=vocabulary_size, output_dim=cfg[kind]['hidden_size']))
@@ -67,7 +61,7 @@ class Model:
             sentence = inception
             for _ in tqdm(range(predictions)):
                 i = np.array(sentence_ids[-number_of_steps:], dtype=int).reshape((1, number_of_steps))
-                o = Model.__temp_predict__(model, i, cfg[kind]['temperature'])
+                o = Worker.__temp_predict__(model, i, cfg[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
             sentence = ' '.join(sentence)
@@ -85,7 +79,7 @@ class Model:
     @staticmethod
     def __build_vocabulary__(pth: str) -> dict:
         data = []
-        for sentence in Model.__read_sentences__(pth):
+        for sentence in Worker.__read_sentences__(pth):
             data += [word for word in sentence]
         counter = collections.Counter(data)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
@@ -97,7 +91,7 @@ class Model:
     @staticmethod
     def __file_to_idx__(file: str, map_direct: dict) -> [[int]]:
         data = []
-        for sentence in Model.__read_sentences__(file):
+        for sentence in Worker.__read_sentences__(file):
             data.append([map_direct[word] for word in sentence])
         return data
 
@@ -105,8 +99,8 @@ class Model:
     def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict, dict):
         crt_dir = get_dir(composer, instruments)
         pth = os.path.join(crt_dir, kind + '_input.txt')
-        map_direct = Model.__build_vocabulary__(pth)
-        data = Model.__file_to_idx__(pth, map_direct)
+        map_direct = Worker.__build_vocabulary__(pth)
+        data = Worker.__file_to_idx__(pth, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
         return data, vocabulary_size, map_direct, map_reverse
@@ -125,26 +119,26 @@ class Model:
         return x, y
 
     @staticmethod
-    def __temp_sample__(preds, temp=1.0):
-        preds = np.asarray(preds).astype('float64')
-        preds = np.log(preds + 1e-9) / temp
-        exp_preds = np.exp(preds)
-        preds = exp_preds / np.sum(exp_preds)
-        probs = np.random.multinomial(1, preds, 1)
-        return np.argmax(probs)
+    def __temp_sample__(pred: np.ndarray, temp: float = 1.0) -> int:
+        pred = np.asarray(pred).astype(np.float64)
+        pred = np.log(pred + 1e-9) / temp
+        pred = np.exp(pred)
+        pred = pred / np.sum(pred)
+        prob = np.random.multinomial(1, pred, 1)
+        return np.argmax(prob)
 
     @staticmethod
-    def __temp_predict__(model, seq, temp=1.0):
-        preds = model.predict(seq, verbose=0)[0]
-        return Model.__temp_sample__(preds, temp)
+    def __temp_predict__(model: Sequential, seq: np.ndarray, temp: float = 1.0):
+        pred = model.predict(seq, verbose=0)[0]
+        return Worker.__temp_sample__(pred, temp)
 
 
 def main(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg:
-        Model(composer=composer, instruments=instruments, kind=kind, mode='train')
+        Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
     for kind in cfg:
-        Model(composer=composer, instruments=instruments, kind=kind, mode='test')
+        Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
     generate_output(composer, instruments)
 
 

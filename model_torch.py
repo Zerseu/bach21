@@ -1,5 +1,4 @@
 import collections
-import multiprocessing
 import os
 import sys
 
@@ -8,12 +7,13 @@ import torch
 from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from config import Config
 from data import get_dir, generate_input, generate_output
 
 cfg = Config().config
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 predictions = 1000
 
 
@@ -24,6 +24,7 @@ class TorchModule(Module):
         self.dropout = torch.nn.Dropout(p=0.25)
         self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
         self.linear = torch.nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
+        self.to(device)
 
     def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
         x = self.embedding(x)
@@ -37,8 +38,8 @@ class TorchModule(Module):
 class TorchDataset(Dataset):
     def __init__(self, x: np.ndarray, y: np.ndarray):
         assert len(x) == len(y)
-        self.x = torch.from_numpy(x).long()
-        self.y = torch.from_numpy(y).long()
+        self.x = torch.from_numpy(x).long().to(device)
+        self.y = torch.from_numpy(y).long().to(device)
 
     def __len__(self) -> int:
         return min(len(self.x), len(self.y))
@@ -47,13 +48,13 @@ class TorchDataset(Dataset):
         return self.x[idx], self.y[idx]
 
 
-class Model:
+class Worker:
     def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
         crt_dir = get_dir(composer, instruments)
 
-        data, vocabulary_size, map_direct, map_reverse = Model.__load_data__(composer, instruments, kind)
+        data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
         print(kind, 'vocabulary size is', vocabulary_size)
-        x, y = Model.__generate_xy__(data, cfg[kind]['number_of_steps'])
+        x, y = Worker.__generate_xy__(data, cfg[kind]['number_of_steps'])
         split = int(min(len(x), len(y)) * 0.8)
         d_trn = TorchDataset(x[:split], y[:split])
         d_val = TorchDataset(x[split:], y[split:])
@@ -62,22 +63,21 @@ class Model:
             model = TorchModule(vocabulary_size, cfg[kind]['hidden_size'])
             loss_function = CrossEntropyLoss()
             optimizer = Adam(model.parameters())
-            cpu_count = multiprocessing.cpu_count() - 4
-            train_loader = DataLoader(dataset=d_trn, batch_size=cfg[kind]['batch_size'], num_workers=cpu_count, shuffle=True)
-            valid_loader = DataLoader(dataset=d_val, batch_size=cfg[kind]['batch_size'], num_workers=cpu_count)
+            train_loader = DataLoader(dataset=d_trn, batch_size=cfg[kind]['batch_size'], shuffle=True)
+            valid_loader = DataLoader(dataset=d_val, batch_size=cfg[kind]['batch_size'])
             csv_logger = os.path.join(crt_dir, kind + '_log.csv')
 
-            Model.__train_model__(model,
-                                  train_loader,
-                                  valid_loader,
-                                  loss_function,
-                                  optimizer,
-                                  csv_logger,
-                                  cfg[kind]['number_of_epochs'])
+            Worker.__train_model__(model,
+                                   train_loader,
+                                   valid_loader,
+                                   loss_function,
+                                   optimizer,
+                                   csv_logger,
+                                   cfg[kind]['number_of_epochs'])
             torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
 
         if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
-            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size'])
+            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size']).cpu()
             model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
 
             number_of_steps = 0
@@ -89,7 +89,7 @@ class Model:
             sentence = inception
             for _ in tqdm(range(predictions)):
                 i = sentence_ids[-number_of_steps:]
-                o = Model.__temp_predict__(model, i, cfg[kind]['temperature'])
+                o = Worker.__temp_predict__(model, i, cfg[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
             sentence = ' '.join(sentence)
@@ -107,7 +107,7 @@ class Model:
     @staticmethod
     def __build_vocabulary__(pth: str) -> dict:
         data = []
-        for sentence in Model.__read_sentences__(pth):
+        for sentence in Worker.__read_sentences__(pth):
             data += [word for word in sentence]
         counter = collections.Counter(data)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
@@ -119,7 +119,7 @@ class Model:
     @staticmethod
     def __file_to_idx__(file: str, map_direct: dict) -> [[int]]:
         data = []
-        for sentence in Model.__read_sentences__(file):
+        for sentence in Worker.__read_sentences__(file):
             data.append([map_direct[word] for word in sentence])
         return data
 
@@ -127,8 +127,8 @@ class Model:
     def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict, dict):
         crt_dir = get_dir(composer, instruments)
         pth = os.path.join(crt_dir, kind + '_input.txt')
-        map_direct = Model.__build_vocabulary__(pth)
-        data = Model.__file_to_idx__(pth, map_direct)
+        map_direct = Worker.__build_vocabulary__(pth)
+        data = Worker.__file_to_idx__(pth, map_direct)
         vocabulary_size = len(map_direct)
         map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
         return data, vocabulary_size, map_direct, map_reverse
@@ -180,24 +180,24 @@ class Model:
                 log.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f}\n')
 
     @staticmethod
-    def __temp_sample__(preds: torch.FloatTensor, temp: float = 1.0) -> int:
-        preds = preds.detach().numpy().astype(np.float64)[0]
-        preds = np.exp(preds / temp)
-        probs = np.random.multinomial(1, preds / np.sum(preds), 1)
-        return np.argmax(probs)
+    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> int:
+        pred = pred.detach().numpy().astype(np.float64)[0]
+        pred = np.exp(pred / temp)
+        prob = np.random.multinomial(1, pred / np.sum(pred), 1)
+        return np.argmax(prob)
 
     @staticmethod
     def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> int:
-        preds = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())
-        return Model.__temp_sample__(preds, temp)
+        pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())
+        return Worker.__temp_sample__(pred, temp)
 
 
 def main(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg:
-        Model(composer=composer, instruments=instruments, kind=kind, mode='train')
+        Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
     for kind in cfg:
-        Model(composer=composer, instruments=instruments, kind=kind, mode='test')
+        Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
     generate_output(composer, instruments)
 
 

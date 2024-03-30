@@ -50,7 +50,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
             if motif_str not in motifs:
                 motif_occ = len(stree.find_all(motif_int))
                 if motif_occ >= 2:
-                    if (motif_occ * motif_length) / len(pitches) >= 1E-4:
+                    if (motif_occ * motif_length) / len(pitches) >= 1e-4:
                         motifs[motif_str] = motif_occ
 
         counter = Counter(motifs)

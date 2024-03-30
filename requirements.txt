@@ -1,0 +1,8 @@
+music21~=9.1.0
+tqdm~=4.66.2
+igraph~=0.11.4
+networkx~=3.2.1
+netrd~=0.3.0
+numpy~=1.26.4
+keras~=3.1.1
+torch~=2.2.2+cu118
