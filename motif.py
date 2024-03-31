@@ -137,8 +137,8 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
 
 def query_distance(composer1: str, instruments1: [str],
                    composer2: str, instruments2: [str]) -> float:
-    query_all(composer1, instruments1, False)
-    query_all(composer2, instruments2, False)
+    query_all(composer1, instruments1)
+    query_all(composer2, instruments2)
 
     dir1 = get_dir(composer1, instruments1)
     dir2 = get_dir(composer2, instruments2)
