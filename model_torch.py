@@ -105,7 +105,7 @@ class Worker:
         return data
 
     @staticmethod
-    def __build_vocabulary__(pth: str) -> dict:
+    def __build_vocabulary__(pth: str) -> dict[str, int]:
         data = []
         for sentence in Worker.__read_sentences__(pth):
             data += [word for word in sentence]
@@ -117,14 +117,14 @@ class Worker:
         return map_direct
 
     @staticmethod
-    def __file_to_idx__(file: str, map_direct: dict) -> [[int]]:
+    def __file_to_idx__(file: str, map_direct: dict[str, int]) -> [[int]]:
         data = []
         for sentence in Worker.__read_sentences__(file):
             data.append([map_direct[word] for word in sentence])
         return data
 
     @staticmethod
-    def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict, dict):
+    def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict[str, int], dict[int, str]):
         crt_dir = get_dir(composer, instruments)
         pth = os.path.join(crt_dir, kind + '_input.txt')
         map_direct = Worker.__build_vocabulary__(pth)
@@ -190,6 +190,15 @@ class Worker:
     def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> int:
         pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())
         return Worker.__temp_sample__(pred, temp)
+
+    @staticmethod
+    def __motif_predict__(motifs: dict[str, int], vocab: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> int:
+        for motif in motifs:
+            motif = [vocab[word] for word in motif.split()]
+            length = min(len(seq), len(motif) - 1)
+            if seq[-length:] == motif[-length - 1:-1]:
+                return motif[-1]
+        return Worker.__temp_predict__(model, seq, temp)
 
 
 def main(composer: str, instruments: [str]):
