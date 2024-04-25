@@ -1,6 +1,7 @@
 import collections
 import multiprocessing
 import os
+import random
 import sys
 
 import numpy as np
@@ -199,7 +200,9 @@ class Worker:
 
     @staticmethod
     def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> int:
-        for motif in motifs:
+        motifs_str = list(motifs.keys())
+        random.shuffle(motifs_str)
+        for motif in motifs_str:
             motif = [model.map_direct[word] for word in motif.split()]
             length = min(len(seq), len(motif) - 1)
             seq_sub = seq[-length:]
