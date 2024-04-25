@@ -178,18 +178,12 @@ def generate_output(composer: str, instruments: [str]):
     composition.append(clef.TrebleClef())
     composition.append(instrument.Violin())
     for i in range(length):
-        try:
-            length = float(durations[i])
-        except ValueError:
-            length = 0
-        if length <= 0:
-            continue
-
-        elif pitches[i] == 'RST':
-            element = note.Rest(length)
+        dur = sorted((0.5, float(durations[i]), 2.0))[1]
+        if pitches[i] == 'RST':
+            element = note.Rest(dur)
         else:
             element = note.Note(pitches[i])
-            element.duration.quarterLength = length
+            element.duration.quarterLength = dur
         composition.append(element)
     composition.makeMeasures(inPlace=True)
     composition.write('midi', pth_midi)

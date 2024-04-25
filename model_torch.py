@@ -1,4 +1,5 @@
 import collections
+import json
 import multiprocessing
 import os
 import random
@@ -26,6 +27,7 @@ class TorchModule(Module):
         self.vocabulary_size = vocabulary_size
         self.map_direct = map_direct
         self.map_reverse = map_reverse
+
         self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
         self.dropout = torch.nn.Dropout(p=0.25)
         self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
@@ -59,8 +61,15 @@ class Worker:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
-        motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'))
         print(kind, 'vocabulary size is', vocabulary_size)
+
+        if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
+            motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'))
+            with open(os.path.join(crt_dir, kind + '_motifs.json'), 'wt') as file:
+                json.dump(motifs, file, indent=4)
+        with open(os.path.join(crt_dir, kind + '_motifs.json'), 'rt') as file:
+            motifs = json.load(file)
+
         x, y = Worker.__generate_xy__(data, cfg[kind]['number_of_steps'])
         split = int(min(len(x), len(y)) * 0.8)
         d_trn = TorchDataset(x[:split], y[:split])
@@ -96,7 +105,7 @@ class Worker:
             sentence = inception
             for _ in tqdm(range(predictions)):
                 i = sentence_ids[-number_of_steps:]
-                o = Worker.__motif_predict__(motifs, model, i, cfg[kind]['temperature'])
+                p, o = Worker.__motif_predict__(motifs, model, i, cfg[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
             sentence = ' '.join(sentence)
@@ -187,30 +196,33 @@ class Worker:
                 log.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f}\n')
 
     @staticmethod
-    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> int:
+    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> (float, int):
         pred = pred.detach().numpy().astype(np.float64)[0]
         pred = np.exp(pred / temp)
-        prob = np.random.multinomial(1, pred / np.sum(pred), 1)
-        return np.argmax(prob)
+        pred = pred / np.sum(pred)
+        prob = np.random.multinomial(1, pred, 1)
+        return np.max(pred), np.argmax(prob)
 
     @staticmethod
-    def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> int:
+    def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
         pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())
         return Worker.__temp_sample__(pred, temp)
 
     @staticmethod
-    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> int:
+    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
+        prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
+        if prob_max > 0.5:
+            return prob_max, prob_argmax
+
         motifs_str = list(motifs.keys())
         random.shuffle(motifs_str)
         for motif in motifs_str:
             motif = [model.map_direct[word] for word in motif.split()]
             length = min(len(seq), len(motif) - 1)
-            seq_sub = seq[-length:]
-            motif_sub = motif[-length - 1:-1]
-            assert len(seq_sub) == len(motif_sub) == length
-            if seq_sub == motif_sub:
-                return motif[-1]
-        return Worker.__temp_predict__(model, seq, temp)
+            if seq[-length:] == motif[-length - 1:-1]:
+                return 1.0, motif[-1]
+
+        return 0.0, prob_argmax
 
     @staticmethod
     def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int) -> dict[str, int]:
@@ -237,14 +249,14 @@ class Worker:
                                                              literal_spaces=False),
                                            string=elems_str,
                                            overlapped=True))
-                if motif_occ > 1:
+                if motif_occ >= 3:
                     motifs[motif_str] = motif_occ
 
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
     @staticmethod
     def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str) -> dict[str, int]:
-        length_lower_bound = 8
+        length_lower_bound = 6
         length_upper_bound = 12
         motifs = {}
 
