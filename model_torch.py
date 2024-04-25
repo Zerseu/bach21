@@ -1,9 +1,11 @@
 import collections
+import multiprocessing
 import os
 import sys
 
 import numpy as np
 import torch
+from suffix_tree import Tree
 from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
@@ -18,8 +20,11 @@ predictions = 1000
 
 
 class TorchModule(Module):
-    def __init__(self, vocabulary_size: int, hidden_size: int):
+    def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int):
         super(TorchModule, self).__init__()
+        self.vocabulary_size = vocabulary_size
+        self.map_direct = map_direct
+        self.map_reverse = map_reverse
         self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
         self.dropout = torch.nn.Dropout(p=0.25)
         self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
@@ -53,6 +58,7 @@ class Worker:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
+        motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'))
         print(kind, 'vocabulary size is', vocabulary_size)
         x, y = Worker.__generate_xy__(data, cfg[kind]['number_of_steps'])
         split = int(min(len(x), len(y)) * 0.8)
@@ -60,7 +66,7 @@ class Worker:
         d_val = TorchDataset(x[split:], y[split:])
 
         if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.torch')):
-            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size'])
+            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg[kind]['hidden_size'])
             loss_function = CrossEntropyLoss()
             optimizer = Adam(model.parameters())
             train_loader = DataLoader(dataset=d_trn, batch_size=cfg[kind]['batch_size'], shuffle=True)
@@ -77,7 +83,7 @@ class Worker:
             torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
 
         if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
-            model = TorchModule(vocabulary_size, cfg[kind]['hidden_size']).cpu()
+            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg[kind]['hidden_size']).cpu()
             model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
 
             number_of_steps = 0
@@ -89,7 +95,7 @@ class Worker:
             sentence = inception
             for _ in tqdm(range(predictions)):
                 i = sentence_ids[-number_of_steps:]
-                o = Worker.__temp_predict__(model, i, cfg[kind]['temperature'])
+                o = Worker.__motif_predict__(motifs, model, i, cfg[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
             sentence = ' '.join(sentence)
@@ -192,13 +198,52 @@ class Worker:
         return Worker.__temp_sample__(pred, temp)
 
     @staticmethod
-    def __motif_predict__(motifs: dict[str, int], vocab: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> int:
+    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> int:
         for motif in motifs:
-            motif = [vocab[word] for word in motif.split()]
+            motif = [model.map_direct[word] for word in motif.split()]
             length = min(len(seq), len(motif) - 1)
             if seq[-length:] == motif[-length - 1:-1]:
                 return motif[-1]
         return Worker.__temp_predict__(model, seq, temp)
+
+    @staticmethod
+    def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int) -> dict[str, int]:
+        elems = []
+        with open(pth, 'rt') as file:
+            for sentence in file.read().split('\n'):
+                for word in sentence.split():
+                    elems.append(map_direct[word])
+
+        motifs: dict[str, int] = {}
+        visited: set[str] = set()
+        stree = Tree({0: elems})
+
+        for motif_start in range(len(elems) - motif_length):
+            motif_int: [int] = elems[motif_start:motif_start + motif_length]
+            motif_str: str = ' '.join([map_reverse[word] for word in motif_int])
+            if motif_str in visited:
+                continue
+            visited.add(motif_str)
+
+            if motif_str not in motifs:
+                motif_occ = len(stree.find_all(motif_int))
+                if motif_occ >= 2:
+                    motifs[motif_str] = motif_occ
+
+        return motifs
+
+    @staticmethod
+    def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str) -> dict[str, int]:
+        length_lower_bound = 8
+        length_upper_bound = 12
+        motifs = {}
+
+        with multiprocessing.Pool(multiprocessing.cpu_count() - 2) as pool:
+            args = [(map_direct, map_reverse, pth, motif_length) for motif_length in range(length_lower_bound, length_upper_bound + 1)]
+            for result in pool.starmap(Worker.__motif_query_any__, args):
+                motifs.update(result)
+
+        return motifs
 
 
 def main(composer: str, instruments: [str]):
