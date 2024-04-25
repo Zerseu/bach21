@@ -4,8 +4,8 @@ import os
 import sys
 
 import numpy as np
+import regex as re
 import torch
-from suffix_tree import Tree
 from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
@@ -202,35 +202,42 @@ class Worker:
         for motif in motifs:
             motif = [model.map_direct[word] for word in motif.split()]
             length = min(len(seq), len(motif) - 1)
-            if seq[-length:] == motif[-length - 1:-1]:
+            seq_sub = seq[-length:]
+            motif_sub = motif[-length - 1:-1]
+            assert len(seq_sub) == len(motif_sub) == length
+            if seq_sub == motif_sub:
                 return motif[-1]
         return Worker.__temp_predict__(model, seq, temp)
 
     @staticmethod
     def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int) -> dict[str, int]:
-        elems = []
+        elems_int = []
         with open(pth, 'rt') as file:
             for sentence in file.read().split('\n'):
                 for word in sentence.split():
-                    elems.append(map_direct[word])
+                    elems_int.append(map_direct[word])
+        elems_str = ' '.join(map_reverse[word] for word in elems_int)
 
         motifs: dict[str, int] = {}
         visited: set[str] = set()
-        stree = Tree({0: elems})
 
-        for motif_start in range(len(elems) - motif_length):
-            motif_int: [int] = elems[motif_start:motif_start + motif_length]
+        for motif_start in range(len(elems_int) - motif_length):
+            motif_int: [int] = elems_int[motif_start:motif_start + motif_length]
             motif_str: str = ' '.join([map_reverse[word] for word in motif_int])
             if motif_str in visited:
                 continue
             visited.add(motif_str)
 
             if motif_str not in motifs:
-                motif_occ = len(stree.find_all(motif_int))
-                if motif_occ >= 2:
+                motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
+                                                             special_only=False,
+                                                             literal_spaces=False),
+                                           string=elems_str,
+                                           overlapped=True))
+                if motif_occ > 1:
                     motifs[motif_str] = motif_occ
 
-        return motifs
+        return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
     @staticmethod
     def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str) -> dict[str, int]:
@@ -243,7 +250,7 @@ class Worker:
             for result in pool.starmap(Worker.__motif_query_any__, args):
                 motifs.update(result)
 
-        return motifs
+        return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
 
 def main(composer: str, instruments: [str]):
