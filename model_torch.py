@@ -64,7 +64,7 @@ class Worker:
         print(kind, 'vocabulary size is', vocabulary_size)
 
         if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
-            motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'))
+            motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'), kind == 'pitch')
             with open(os.path.join(crt_dir, kind + '_motifs.json'), 'wt') as file:
                 json.dump(motifs, file, indent=4)
         with open(os.path.join(crt_dir, kind + '_motifs.json'), 'rt') as file:
@@ -225,7 +225,11 @@ class Worker:
         return 0.0, prob_argmax
 
     @staticmethod
-    def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int) -> dict[str, int]:
+    def __motif_query_filter__(motif_int: [int]) -> bool:
+        return len(set(motif_int)) > 1
+
+    @staticmethod
+    def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int, motif_filter: bool = False) -> dict[str, int]:
         elems_int = []
         with open(pth, 'rt') as file:
             for sentence in file.read().split('\n'):
@@ -238,6 +242,8 @@ class Worker:
 
         for motif_start in range(len(elems_int) - motif_length):
             motif_int: [int] = elems_int[motif_start:motif_start + motif_length]
+            if motif_filter and not Worker.__motif_query_filter__(motif_int):
+                continue
             motif_str: str = ' '.join([map_reverse[word] for word in motif_int])
             if motif_str in visited:
                 continue
@@ -255,13 +261,13 @@ class Worker:
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
     @staticmethod
-    def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str) -> dict[str, int]:
+    def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_filter: bool = False) -> dict[str, int]:
         length_lower_bound = 6
         length_upper_bound = 12
         motifs = {}
 
         with multiprocessing.Pool(multiprocessing.cpu_count() - 2) as pool:
-            args = [(map_direct, map_reverse, pth, motif_length) for motif_length in range(length_lower_bound, length_upper_bound + 1)]
+            args = [(map_direct, map_reverse, pth, motif_length, motif_filter) for motif_length in range(length_lower_bound, length_upper_bound + 1)]
             for result in pool.starmap(Worker.__motif_query_any__, args):
                 motifs.update(result)
 
