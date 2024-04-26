@@ -16,6 +16,7 @@ from tqdm import tqdm
 from config import Config
 from data import get_dir, generate_input, generate_output
 
+random.seed(0)
 cfg = Config().config
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 predictions = 1000
@@ -229,7 +230,11 @@ class Worker:
         return len(set(motif_int)) > 1
 
     @staticmethod
-    def __motif_query_any__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_length: int, motif_filter: bool = False) -> dict[str, int]:
+    def __motif_query_any__(map_direct: dict[str, int],
+                            map_reverse: dict[int, str],
+                            pth: str,
+                            motif_length: int,
+                            motif_filter: bool = False) -> dict[str, int]:
         elems_int = []
         with open(pth, 'rt') as file:
             for sentence in file.read().split('\n'):
@@ -261,9 +266,12 @@ class Worker:
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
     @staticmethod
-    def __motif_query_all__(map_direct: dict[str, int], map_reverse: dict[int, str], pth: str, motif_filter: bool = False) -> dict[str, int]:
-        length_lower_bound = 6
-        length_upper_bound = 12
+    def __motif_query_all__(map_direct: dict[str, int],
+                            map_reverse: dict[int, str],
+                            pth: str,
+                            motif_filter: bool = False) -> dict[str, int]:
+        length_lower_bound = 4
+        length_upper_bound = 16
         motifs = {}
 
         with multiprocessing.Pool(multiprocessing.cpu_count() - 2) as pool:
