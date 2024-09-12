@@ -72,7 +72,7 @@ class Worker:
     def __read_sentences__(pth: str) -> [[str]]:
         data = []
         with open(pth, 'rt') as file:
-            for sentence in file.read().split('\n'):
+            for sentence in file.read().strip('\n').split('\n'):
                 data.append(sentence.split())
         return data
 

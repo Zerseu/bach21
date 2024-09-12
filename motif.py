@@ -25,7 +25,7 @@ def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {})
 
         pitches = []
         with open(os.path.join(crt_dir, 'pitch_input.txt'), 'rt') as file:
-            for sentence in file.read().split('\n'):
+            for sentence in file.read().strip('\n').split('\n'):
                 for word in sentence.split():
                     if word == 'RST':
                         continue

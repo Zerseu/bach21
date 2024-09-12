@@ -117,7 +117,7 @@ class Worker:
     def __read_sentences__(pth: str) -> [[str]]:
         data = []
         with open(pth, 'rt') as file:
-            for sentence in file.read().split('\n'):
+            for sentence in file.read().strip('\n').split('\n'):
                 data.append(sentence.split())
         return data
 
@@ -237,7 +237,7 @@ class Worker:
                             motif_filter: bool = False) -> dict[str, int]:
         elems_int = []
         with open(pth, 'rt') as file:
-            for sentence in file.read().split('\n'):
+            for sentence in file.read().strip('\n').split('\n'):
                 for word in sentence.split():
                     elems_int.append(map_direct[word])
         elems_str = ' '.join(map_reverse[word] for word in elems_int)
