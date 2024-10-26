@@ -13,8 +13,9 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from config import Config
+from config import Config, fprintf
 from data import get_dir, generate_input, generate_output
+from entropy import sequence_entropy, composer_entropy, reference_entropy
 
 random.seed(0)
 cfg = Config().config
@@ -62,7 +63,7 @@ class Worker:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
-        print(kind, 'vocabulary size is', vocabulary_size)
+        fprintf(kind, 'vocabulary size is', vocabulary_size)
 
         if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
             motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'), kind == 'pitch')
@@ -109,6 +110,8 @@ class Worker:
                 p, o = Worker.__motif_predict__(motifs, model, i, cfg[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
+            fprintf('Analyzing synthetic sequence entropy for', composer, instruments, kind)
+            fprintf(sequence_entropy(sentence), reference_entropy(vocabulary_size, len(sentence)))
             sentence = ' '.join(sentence)
             with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
@@ -212,7 +215,7 @@ class Worker:
     @staticmethod
     def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
         prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
-        if prob_max > 0.5:
+        if prob_max > 0.5 or not cfg['pitch']['motif_augmentation']:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
@@ -283,6 +286,9 @@ class Worker:
 
 
 def main(composer: str, instruments: [str]):
+    fprintf('Analyzing entropy for', composer, instruments)
+    composer_entropy(composer, instruments)
+
     generate_input(composer, instruments)
     for kind in cfg:
         Worker(composer=composer, instruments=instruments, kind=kind, mode='train')

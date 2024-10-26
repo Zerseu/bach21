@@ -1,9 +1,11 @@
 import os
 import random
+import sys
 
 import numpy as np
 import pandas as pd
 
+from config import fprintf
 from data import get_dir, generate_input
 
 
@@ -45,8 +47,12 @@ def composer_entropy(composer: str, instruments: [str]):
                         vocabulary.add(word)
     for sequence in pitches:
         if len(sequence) > 256:
-            print(sequence_entropy(sequence), reference_entropy(len(vocabulary), len(sequence)))
+            fprintf(sequence_entropy(sequence), reference_entropy(len(vocabulary), len(sequence)))
+
+
+def main(composer: str, instruments: [str]):
+    composer_entropy(composer, instruments)
 
 
 if __name__ == "__main__":
-    composer_entropy('bach', ['violin'])
+    main(sys.argv[1], sys.argv[2:])
