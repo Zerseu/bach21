@@ -1,9 +1,0 @@
-music21~=9.1.0
-tqdm~=4.66.2
-numpy~=1.26.4
-regex~=2024.4.16
-torch~=2.2.2+cu118
-igraph~=0.11.4
-networkx~=3.2.1
-netrd~=0.3.0
-pandas~=2.2.1

@@ -10,7 +10,7 @@ from netrd.distance.laplacian_spectral_method import LaplacianSpectral
 from suffix_tree import Tree
 from tqdm import tqdm
 
-from config import fprintf
+from config import log
 from data import get_dir, generate_input
 
 LengthLowerBound: int = 8
@@ -18,7 +18,7 @@ LengthUpperBound: int = 24
 
 
 def query_any(composer: str, instruments: [str], motif_length: int) -> (int, {}):
-    fprintf('Examining motifs of length', motif_length)
+    log('Examining motifs of length', motif_length)
     crt_dir = get_dir(composer, instruments)
 
     if not os.path.exists(os.path.join(crt_dir, 'motifs_{:02d}.json'.format(motif_length))):
@@ -74,15 +74,15 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
             for word in file.read().split():
                 pitches.append(word)
 
-        fprintf('Running parallel motif discovery from length', LengthLowerBound, 'to', LengthUpperBound)
+        log('Running parallel motif discovery from length', LengthLowerBound, 'to', LengthUpperBound)
         motifs = {}
         with multiprocessing.Pool(multiprocessing.cpu_count() - 4) as pool:
             args = [(composer, instruments, motif_length) for motif_length in range(LengthLowerBound, LengthUpperBound + 1)]
             for result in pool.starmap(query_any, args):
                 motifs[result[0]] = result[1]
-        fprintf('Motif discovery complete...')
+        log('Motif discovery complete...')
 
-        fprintf('Computing motif relationship graph...')
+        log('Computing motif relationship graph...')
         vertices = 0
         labels = []
         occurrences = []
@@ -100,7 +100,7 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
                 if lengths[motif_sub_idx] + 1 == lengths[motif_sup_idx]:
                     if labels[motif_sub_idx] in labels[motif_sup_idx]:
                         edges.append((motif_sub_idx, motif_sup_idx))
-        fprintf('Graph computation complete...')
+        log('Graph computation complete...')
 
         g = ig.Graph(n=vertices,
                      edges=edges,
@@ -112,7 +112,7 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
     g = ig.load(os.path.join(crt_dir, 'motifs.gml'))
 
     if plot:
-        fprintf('Plotting motif relationship top-10 connected components...')
+        log('Plotting motif relationship top-10 connected components...')
         g_comp = g.connected_components(mode='weak')
         g_comp = [c for c in g_comp if len(c) > 1]
         g_comp.sort(key=len, reverse=True)
@@ -133,7 +133,7 @@ def query_all(composer: str, instruments: [str], plot: bool = True):
             conn_comp_lout = conn_comp.layout('auto')
             with open(os.path.join(crt_dir, 'layout_{:02d}.json'.format(idx)), 'wt') as file:
                 json.dump(conn_comp_lout.coords, file, indent=4)
-        fprintf('Component plot complete...')
+        log('Component plot complete...')
 
 
 def query_distance(composer1: str, instruments1: [str],

@@ -13,12 +13,14 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from config import Config, fprintf
+from config import Config, log
 from data import get_dir, generate_input, generate_output
 from entropy import sequence_entropy, composer_entropy, reference_entropy
 
+cfg = Config()
+motif_augmentation = True
+
 random.seed(0)
-cfg = Config().config
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 predictions = 1000
 
@@ -63,7 +65,7 @@ class Worker:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
-        fprintf(kind, 'vocabulary size is', vocabulary_size)
+        log(kind, 'vocabulary size is', vocabulary_size)
 
         if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
             motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'), kind == 'pitch')
@@ -72,17 +74,17 @@ class Worker:
         with open(os.path.join(crt_dir, kind + '_motifs.json'), 'rt') as file:
             motifs = json.load(file)
 
-        x, y = Worker.__generate_xy__(data, cfg[kind]['number_of_steps'])
+        x, y = Worker.__generate_xy__(data, cfg.config[kind]['number_of_steps'])
         split = int(min(len(x), len(y)) * 0.8)
         d_trn = TorchDataset(x[:split], y[:split])
         d_val = TorchDataset(x[split:], y[split:])
 
         if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.torch')):
-            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg[kind]['hidden_size'])
+            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg.config[kind]['hidden_size'])
             loss_function = CrossEntropyLoss()
             optimizer = Adam(model.parameters())
-            train_loader = DataLoader(dataset=d_trn, batch_size=cfg[kind]['batch_size'], shuffle=True)
-            valid_loader = DataLoader(dataset=d_val, batch_size=cfg[kind]['batch_size'])
+            train_loader = DataLoader(dataset=d_trn, batch_size=cfg.config[kind]['batch_size'], shuffle=True)
+            valid_loader = DataLoader(dataset=d_val, batch_size=cfg.config[kind]['batch_size'])
             csv_logger = os.path.join(crt_dir, kind + '_log.csv')
 
             Worker.__train_model__(model,
@@ -91,27 +93,27 @@ class Worker:
                                    loss_function,
                                    optimizer,
                                    csv_logger,
-                                   cfg[kind]['number_of_epochs'])
+                                   cfg.config[kind]['number_of_epochs'])
             torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
 
         if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
-            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg[kind]['hidden_size']).cpu()
+            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg.config[kind]['hidden_size']).cpu()
             model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
 
             number_of_steps = 0
-            for key in cfg:
-                number_of_steps = max(number_of_steps, cfg[key]['number_of_steps'])
+            for key in cfg.config:
+                number_of_steps = max(number_of_steps, cfg.config[key]['number_of_steps'])
             with open(os.path.join(crt_dir, kind + '_input.txt'), 'rt') as file:
                 inception = file.read().split()[:number_of_steps]
             sentence_ids = [map_direct[element] for element in inception]
             sentence = inception
             for _ in tqdm(range(predictions)):
                 i = sentence_ids[-number_of_steps:]
-                p, o = Worker.__motif_predict__(motifs, model, i, cfg[kind]['temperature'])
+                p, o = Worker.__motif_predict__(motifs, model, i, cfg.config[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
-            fprintf('Analyzing synthetic sequence entropy for', composer, instruments, kind)
-            fprintf(sequence_entropy(sentence), reference_entropy(vocabulary_size, len(sentence)))
+            log('Analyzing synthetic sequence entropy for', composer, instruments, kind)
+            log(sequence_entropy(sentence), reference_entropy(vocabulary_size, len(sentence)))
             sentence = ' '.join(sentence)
             with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
@@ -174,8 +176,8 @@ class Worker:
                         optimizer: Adam,
                         csv_logger: str,
                         num_epochs: int = 10):
-        with open(csv_logger, 'wt') as log:
-            log.write('epoch,train_loss,validation_loss\n')
+        with open(csv_logger, 'wt') as file:
+            file.write('epoch,train_loss,validation_loss\n')
             for epoch in tqdm(range(num_epochs)):
                 model.train()
                 total_train_loss = 0
@@ -197,7 +199,7 @@ class Worker:
 
                 avg_train_loss = total_train_loss / len(train_loader)
                 avg_valid_loss = total_valid_loss / len(valid_loader)
-                log.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f}\n')
+                file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f}\n')
 
     @staticmethod
     def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> (float, int):
@@ -215,7 +217,7 @@ class Worker:
     @staticmethod
     def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
         prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
-        if prob_max > 0.5 or not cfg['pitch']['motif_augmentation']:
+        if prob_max > 0.5 or not motif_augmentation:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
@@ -286,13 +288,13 @@ class Worker:
 
 
 def main(composer: str, instruments: [str]):
-    fprintf('Analyzing entropy for', composer, instruments)
     composer_entropy(composer, instruments)
+    exit(0)
 
     generate_input(composer, instruments)
-    for kind in cfg:
+    for kind in cfg.config:
         Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
-    for kind in cfg:
+    for kind in cfg.config:
         Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
     generate_output(composer, instruments)
 

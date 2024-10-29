@@ -12,12 +12,20 @@ class Config:
                               batch_size=parser.getint(sections[s], 'batch_size'),
                               hidden_size=parser.getint(sections[s], 'hidden_size'),
                               number_of_epochs=parser.getint(sections[s], 'number_of_epochs'),
-                              temperature=parser.getfloat(sections[s], 'temperature'),
-                              motif_augmentation=parser.getboolean(sections[s], 'motif_augmentation'))
+                              temperature=parser.getfloat(sections[s], 'temperature'))
             self.config[sections[s]] = dictionary
 
+    def __str__(self):
+        result = ''
+        result += f"ns_{self.config['pitch']['number_of_steps']}_"
+        result += f"bs_{self.config['pitch']['batch_size']}_"
+        result += f"hs_{self.config['pitch']['hidden_size']}_"
+        result += f"ne_{self.config['pitch']['number_of_epochs']}_"
+        result += f"tmp_{self.config['pitch']['temperature']:.1f}"
+        return result
 
-def fprintf(*values: object):
+
+def log(*values: object):
     print(*values)
-    with open('bach21.log', 'at') as log:
-        print(*values, file=log, flush=True)
+    with open('bach21.log', 'at') as file:
+        print(*values, file=file, flush=True)

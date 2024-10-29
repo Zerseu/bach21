@@ -2,11 +2,16 @@ import os
 import random
 import sys
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
-from config import fprintf
+from config import log
 from data import get_dir, generate_input
+
+matplotlib.use('TkAgg')
 
 
 def helper_entropy(probabilities: pd.DataFrame) -> float:
@@ -31,6 +36,7 @@ def sequence_entropy(sequence: [str]) -> float:
 
 
 def composer_entropy(composer: str, instruments: [str]):
+    log('Computing', composer.upper(), 'entropy plot...')
     crt_dir = get_dir(composer, instruments)
     generate_input(composer, instruments)
     pitches = []
@@ -45,14 +51,30 @@ def composer_entropy(composer: str, instruments: [str]):
                     pitches[-1].append(word)
                     if word not in vocabulary:
                         vocabulary.add(word)
-    for sequence in pitches:
+
+    seq_len = []
+    x_values = []
+    y_values = []
+    for sequence in tqdm(pitches):
         if len(sequence) > 256:
-            fprintf(sequence_entropy(sequence), reference_entropy(len(vocabulary), len(sequence)))
+            seq_len.append(str(len(sequence)))
+            x_values.append(sequence_entropy(sequence))
+            y_values.append(reference_entropy(len(vocabulary), len(sequence)))
 
-
-def main(composer: str, instruments: [str]):
-    composer_entropy(composer, instruments)
+    pth_plot = os.path.join(crt_dir, 'entropy_plot.png')
+    dpi = 72
+    fig_width = 3000
+    fig_height = 750
+    plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
+    plt.bar(seq_len, x_values, label='Real Entropy')
+    plt.bar(seq_len, y_values, bottom=x_values, label='Reference Entropy')  # Stack item2 on top of item1
+    plt.xlabel('Sequences')
+    plt.ylabel('Entropy')
+    plt.title(composer.capitalize())
+    plt.legend()
+    plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
+    plt.close('all')
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2:])
+    composer_entropy(sys.argv[1], sys.argv[2:])

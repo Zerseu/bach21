@@ -7,7 +7,7 @@ import music21.note
 from music21 import *
 from tqdm import tqdm
 
-from config import fprintf
+from config import log
 
 DataRoot: str = 'bach21data'
 FilterParts: bool = False
@@ -77,11 +77,11 @@ def generate_input(composer: str, instruments: [str]):
     if os.path.exists(pth_pitches) and os.path.exists(pth_durations):
         return
 
-    fprintf('Generating input data...')
+    log('Generating input data...')
     num_pitches = []
     num_durations = []
 
-    fprintf('Parsing cached corpus...')
+    log('Parsing cached corpus...')
     for root, dirs, files in os.walk('bach21cache'):
         random.shuffle(files)
         for file_pth in files:
@@ -99,10 +99,10 @@ def generate_input(composer: str, instruments: [str]):
                                     if instr.lower() in part.lower():
                                         num_pitches.append(parts[part][0])
                                         num_durations.append(parts[part][1])
-    fprintf('Done parsing cached corpus...')
+    log('Done parsing cached corpus...')
 
     if FilterParts:
-        fprintf('Excluding duplicate parts...')
+        log('Excluding duplicate parts...')
         length = len(num_pitches)
         done = False
         while not done:
@@ -134,8 +134,8 @@ def generate_input(composer: str, instruments: [str]):
             valid.append(ok)
         num_pitches = [num_pitches[idx] for idx in range(length) if valid[idx]]
         num_durations = [num_durations[idx] for idx in range(length) if valid[idx]]
-        fprintf('Excluded', invalid, 'parts!')
-        fprintf('Done excluding duplicate parts...')
+        log('Excluded', invalid, 'parts!')
+        log('Done excluding duplicate parts...')
 
     total_units = 0
     with open(pth_pitches, 'wt') as file_pitches:
@@ -156,8 +156,8 @@ def generate_input(composer: str, instruments: [str]):
                 file_pitches.write(' '.join(str_pitches) + '\n')
                 file_durations.write(' '.join(str_durations) + '\n')
                 total_units += len(str_pitches)
-    fprintf('Done generating input data...')
-    fprintf(composer.upper(), 'data has', total_units, 'units...')
+    log('Done generating input data...')
+    log(composer.upper(), 'data has', total_units, 'units...')
 
 
 def generate_output(composer: str, instruments: [str]):
@@ -168,7 +168,7 @@ def generate_output(composer: str, instruments: [str]):
     pth_midi = os.path.join(crt_dir, 'midi_output.mid')
     pth_xml = os.path.join(crt_dir, 'xml_output.musicxml')
 
-    fprintf('Generating output data...')
+    log('Generating output data...')
     with open(pth_pitch, 'rt') as file:
         pitches = file.read().split(' ')
     with open(pth_duration, 'rt') as file:
@@ -190,4 +190,4 @@ def generate_output(composer: str, instruments: [str]):
     composition.makeMeasures(inPlace=True)
     composition.write('midi', pth_midi)
     composition.write('musicxml', pth_xml)
-    fprintf('Done generating output data...')
+    log('Done generating output data...')

@@ -5,7 +5,7 @@ from typing import Optional
 from music21 import *
 from tqdm import tqdm
 
-from config import fprintf
+from config import log
 
 InternalCorpus: bool = True
 ExternalCorpus: Optional[str] = 'C:\\midi'  # Note: escaped backslash...
@@ -54,7 +54,7 @@ def rebuild_cache():
         try:
             composition = corpus.parse(pth)
         except Exception:
-            fprintf('Skipping', pth, 'because it is corrupt...')
+            log('Skipping', pth, 'because it is corrupt...')
             continue
         cache_file = os.path.splitext(composition.metadata.corpusFilePath)[0]
         if ExternalCorpus is not None and cache_file.startswith(ExternalCorpus):
