@@ -20,7 +20,9 @@ from entropy import sequence_entropy, composer_entropy, reference_entropy
 cfg = Config()
 motif_augmentation = True
 
-random.seed(0)
+seed = 0
+random.seed(seed)
+torch.manual_seed(seed)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 predictions = 1000
 
@@ -104,16 +106,16 @@ class Worker:
             for key in cfg.config:
                 number_of_steps = max(number_of_steps, cfg.config[key]['number_of_steps'])
             with open(os.path.join(crt_dir, kind + '_input.txt'), 'rt') as file:
-                inception = file.read().split()[:number_of_steps]
+                content = file.read().split()
+                idx = random.randrange(0, len(content) - number_of_steps)
+                inception = content[idx:idx + number_of_steps]
             sentence_ids = [map_direct[element] for element in inception]
             sentence = inception
-            for _ in tqdm(range(predictions)):
+            for _ in tqdm(range(predictions - number_of_steps)):
                 i = sentence_ids[-number_of_steps:]
                 p, o = Worker.__motif_predict__(motifs, model, i, cfg.config[kind]['temperature'])
                 sentence_ids.append(o)
                 sentence.append(map_reverse[o])
-            log('Analyzing synthetic sequence entropy for', composer, instruments, kind)
-            log(sequence_entropy(sentence), reference_entropy(vocabulary_size, len(sentence)))
             sentence = ' '.join(sentence)
             with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
                 file.write(sentence)
@@ -287,17 +289,44 @@ class Worker:
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
 
-def main(composer: str, instruments: [str]):
-    composer_entropy(composer, instruments)
-    exit(0)
-
+def main_train(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg.config:
         Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
-    for kind in cfg.config:
-        Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
-    generate_output(composer, instruments)
+
+
+def main_test(composer: str, instruments: [str]):
+    global motif_augmentation
+    crt_dir = get_dir(composer, instruments)
+    composer_entropy(composer, instruments)
+    trials = 10
+    pitch_reference_entropy = reference_entropy(cfg.config['pitch']['vocabulary_size'], predictions)
+    log('Reference entropy:', pitch_reference_entropy)
+
+    motif_augmentation = False
+    without_motifs = []
+    for _ in range(trials):
+        for kind in cfg.config:
+            Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
+        generate_output(composer, instruments)
+        with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+            sentence = file.read().split()
+        without_motifs.append(sequence_entropy(sentence))
+
+    motif_augmentation = True
+    with_motifs = []
+    for _ in range(trials):
+        for kind in cfg.config:
+            Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
+        generate_output(composer, instruments)
+        with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+            sentence = file.read().split()
+        assert len(sentence) == predictions
+        with_motifs.append(sequence_entropy(sentence))
+
+    log('Without motifs:', without_motifs)
+    log('With motifs:', with_motifs)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2:])
+    main_train(sys.argv[1], sys.argv[2:])
