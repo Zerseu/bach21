@@ -20,10 +20,10 @@ from entropy import sequence_entropy, composer_entropy, reference_entropy
 cfg = Config()
 motif_augmentation = True
 
-seed = 0
+seed = 42
 random.seed(seed)
 torch.manual_seed(seed)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 predictions = 1000
 
 
@@ -67,7 +67,6 @@ class Worker:
         crt_dir = get_dir(composer, instruments)
 
         data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
-        log(kind, 'vocabulary size is', vocabulary_size)
 
         if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
             motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'), kind == 'pitch')
@@ -223,7 +222,6 @@ class Worker:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
-        random.shuffle(motifs_str)
         for motif in motifs_str:
             motif = [model.map_direct[word] for word in motif.split()]
             length = min(len(seq), len(motif) - 1)
@@ -267,7 +265,7 @@ class Worker:
                                                              literal_spaces=False),
                                            string=elems_str,
                                            overlapped=True))
-                if motif_occ >= 3:
+                if motif_occ > 1:
                     motifs[motif_str] = motif_occ
 
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
@@ -278,7 +276,7 @@ class Worker:
                             pth: str,
                             motif_filter: bool = False) -> dict[str, int]:
         length_lower_bound = 4
-        length_upper_bound = 16
+        length_upper_bound = 8
         motifs = {}
 
         with multiprocessing.Pool(multiprocessing.cpu_count() - 2) as pool:
@@ -293,36 +291,39 @@ def main_train(composer: str, instruments: [str]):
     generate_input(composer, instruments)
     for kind in cfg.config:
         Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
+    for kind in cfg.config:
+        Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
+    generate_output(composer, instruments)
 
 
 def main_test(composer: str, instruments: [str]):
     global motif_augmentation
-    crt_dir = get_dir(composer, instruments)
-    composer_entropy(composer, instruments)
+    generate_input(composer, instruments)
 
-    trials = 10
+    crt_dir = get_dir(composer, instruments)
     pth = os.path.join(crt_dir, 'pitch_input.txt')
     map_direct = Worker.__build_vocabulary__(pth)
     vocabulary_size = len(map_direct)
+
+    composer_entropy(composer, instruments)
     pitch_reference_entropy = reference_entropy(vocabulary_size, predictions)
     log('Reference entropy:', pitch_reference_entropy)
+
+    trials = 5
 
     motif_augmentation = False
     without_motifs = []
     for _ in range(trials):
-        for kind in cfg.config:
-            Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
-        generate_output(composer, instruments)
+        Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
         with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
             sentence = file.read().split()
+        assert len(sentence) == predictions
         without_motifs.append(sequence_entropy(sentence))
 
     motif_augmentation = True
     with_motifs = []
     for _ in range(trials):
-        for kind in cfg.config:
-            Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
-        generate_output(composer, instruments)
+        Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
         with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
             sentence = file.read().split()
         assert len(sentence) == predictions
@@ -333,4 +334,5 @@ def main_test(composer: str, instruments: [str]):
 
 
 if __name__ == '__main__':
+    main_train(sys.argv[1], sys.argv[2:])
     main_test(sys.argv[1], sys.argv[2:])
