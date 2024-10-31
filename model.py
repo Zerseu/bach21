@@ -98,7 +98,7 @@ class Worker:
                                    cfg.config[kind]['number_of_epochs'])
             torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
 
-        if mode == 'test' and not os.path.exists(os.path.join(crt_dir, kind + '_output.txt')):
+        if mode == 'test':
             model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg.config[kind]['hidden_size']).cpu()
             model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
 
@@ -299,8 +299,12 @@ def main_test(composer: str, instruments: [str]):
     global motif_augmentation
     crt_dir = get_dir(composer, instruments)
     composer_entropy(composer, instruments)
+
     trials = 10
-    pitch_reference_entropy = reference_entropy(cfg.config['pitch']['vocabulary_size'], predictions)
+    pth = os.path.join(crt_dir, 'pitch_input.txt')
+    map_direct = Worker.__build_vocabulary__(pth)
+    vocabulary_size = len(map_direct)
+    pitch_reference_entropy = reference_entropy(vocabulary_size, predictions)
     log('Reference entropy:', pitch_reference_entropy)
 
     motif_augmentation = False
@@ -329,4 +333,4 @@ def main_test(composer: str, instruments: [str]):
 
 
 if __name__ == '__main__':
-    main_train(sys.argv[1], sys.argv[2:])
+    main_test(sys.argv[1], sys.argv[2:])
