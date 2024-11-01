@@ -309,7 +309,7 @@ def main_test(composer: str, instruments: [str]):
     pitch_reference_entropy = reference_entropy(vocabulary_size, predictions)
     log('Reference entropy:', pitch_reference_entropy)
 
-    trials = 5
+    trials = 10
 
     motif_augmentation = False
     without_motifs = []
