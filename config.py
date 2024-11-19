@@ -1,4 +1,5 @@
 import configparser
+from sys import stdout
 
 
 class Config:
@@ -26,6 +27,6 @@ class Config:
 
 
 def log(*values: object):
-    print(*values)
+    print(*values, file=stdout, flush=True)
     with open('bach21.log', 'at') as file:
         print(*values, file=file, flush=True)

@@ -112,7 +112,8 @@ def composer_entropy(composer: str, instruments: [str]):
     plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
     plt.close('all')
 
-    log(interp(1000))
+    log(composer.upper(), 'expected entropy for 1000 notes is', interp(1000))
+    log(composer.upper(), 'noise entropy for 1000 notes is', reference_entropy(len(vocabulary), 1000))
 
 
 if __name__ == "__main__":

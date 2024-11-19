@@ -5,6 +5,8 @@ import os
 import random
 import sys
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import regex as re
 import torch
@@ -13,10 +15,11 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from config import Config, log
+from config import Config
 from data import get_dir, generate_input, generate_output
-from entropy import sequence_entropy, composer_entropy, reference_entropy
+from entropy import sequence_entropy, composer_entropy
 
+matplotlib.use('TkAgg')
 cfg = Config()
 motif_augmentation = True
 
@@ -110,7 +113,7 @@ class Worker:
                 inception = content[idx:idx + number_of_steps]
             sentence_ids = [map_direct[element] for element in inception]
             sentence = inception
-            for _ in tqdm(range(predictions - number_of_steps)):
+            for _ in range(predictions - number_of_steps):
                 i = sentence_ids[-number_of_steps:]
                 p, o = Worker.__motif_predict__(motifs, model, i, cfg.config[kind]['temperature'])
                 sentence_ids.append(o)
@@ -218,7 +221,7 @@ class Worker:
     @staticmethod
     def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
         prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
-        if prob_max > 0.5 or not motif_augmentation:
+        if prob_max > 0.25 or not motif_augmentation:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
@@ -299,40 +302,57 @@ def main_train(composer: str, instruments: [str]):
 def main_test(composer: str, instruments: [str]):
     global motif_augmentation
     generate_input(composer, instruments)
-
-    crt_dir = get_dir(composer, instruments)
-    pth = os.path.join(crt_dir, 'pitch_input.txt')
-    map_direct = Worker.__build_vocabulary__(pth)
-    vocabulary_size = len(map_direct)
-
     composer_entropy(composer, instruments)
-    pitch_reference_entropy = reference_entropy(vocabulary_size, predictions)
-    log('Reference entropy:', pitch_reference_entropy)
+    crt_dir = get_dir(composer, instruments)
 
-    trials = 10
+    temp_min = 10
+    temp_max = 100
+    no_trials = 10
 
-    motif_augmentation = False
-    without_motifs = []
-    for _ in range(trials):
-        Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-        with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-            sentence = file.read().split()
-        assert len(sentence) == predictions
-        without_motifs.append(sequence_entropy(sentence))
+    xs = []
+    ys_wo = []
+    ys_w = []
+    for temperature in tqdm(range(temp_min, temp_max)):
+        temperature /= 10
+        xs.append(temperature)
+        cfg.config['pitch']['temperature'] = temperature
 
-    motif_augmentation = True
-    with_motifs = []
-    for _ in range(trials):
-        Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-        with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-            sentence = file.read().split()
-        assert len(sentence) == predictions
-        with_motifs.append(sequence_entropy(sentence))
+        motif_augmentation = False
+        without_motifs = []
+        for _ in range(no_trials):
+            Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
+            with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                sentence = file.read().split()
+            assert len(sentence) == predictions
+            without_motifs.append(sequence_entropy(sentence))
 
-    log('Without motifs:', without_motifs)
-    log('With motifs:', with_motifs)
+        motif_augmentation = True
+        with_motifs = []
+        for _ in range(no_trials):
+            Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
+            with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                sentence = file.read().split()
+            assert len(sentence) == predictions
+            with_motifs.append(sequence_entropy(sentence))
+
+        ys_wo.append(np.mean(without_motifs))
+        ys_w.append(np.mean(with_motifs))
+
+    pth_plot = os.path.join(crt_dir, 'entropy_plot_motifs.png')
+    dpi = 72
+    fig_width = 3000
+    fig_height = 1000
+    plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
+    plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
+    plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
+    plt.xlabel('Sampling Temperature')
+    plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
+    plt.title(composer.capitalize())
+    plt.legend()
+    plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
+    plt.close('all')
 
 
 if __name__ == '__main__':
-    main_train(sys.argv[1], sys.argv[2:])
+    # main_train(sys.argv[1], sys.argv[2:])
     main_test(sys.argv[1], sys.argv[2:])
