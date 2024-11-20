@@ -49,7 +49,7 @@ def interp_lagrange(x_points: [float], y_points: [float], x: float) -> float:
     return y
 
 
-def composer_entropy(composer: str, instruments: [str]):
+def composer_entropy(composer: str, instruments: [str]) -> (float, float):
     log('Computing', composer.upper(), 'entropy plot...')
     crt_dir = get_dir(composer, instruments)
     generate_input(composer, instruments)
@@ -88,7 +88,7 @@ def composer_entropy(composer: str, instruments: [str]):
     fig_height = 750
     plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
     plt.bar(seq_len_str, x_values, label='Real Entropy')
-    plt.bar(seq_len_str, y_values, bottom=x_values, label='Reference Entropy')
+    plt.bar(seq_len_str, y_values, bottom=x_values, label='Noise Entropy')
     plt.xlabel('Sequences')
     plt.ylabel('Entropy')
     plt.title(composer.capitalize())
@@ -112,8 +112,7 @@ def composer_entropy(composer: str, instruments: [str]):
     plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
     plt.close('all')
 
-    log(composer.upper(), 'expected entropy for 1000 notes is', interp(1000))
-    log(composer.upper(), 'noise entropy for 1000 notes is', reference_entropy(len(vocabulary), 1000))
+    return interp(1000), reference_entropy(len(vocabulary), 1000)
 
 
 if __name__ == "__main__":

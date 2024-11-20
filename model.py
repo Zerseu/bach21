@@ -22,6 +22,7 @@ from entropy import sequence_entropy, composer_entropy
 matplotlib.use('TkAgg')
 cfg = Config()
 motif_augmentation = True
+motif_threshold = 0.25
 
 seed = 42
 random.seed(seed)
@@ -221,7 +222,7 @@ class Worker:
     @staticmethod
     def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
         prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
-        if prob_max > 0.25 or not motif_augmentation:
+        if prob_max > motif_threshold or not motif_augmentation:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
@@ -300,57 +301,67 @@ def main_train(composer: str, instruments: [str]):
 
 
 def main_test(composer: str, instruments: [str]):
-    global motif_augmentation
+    global motif_augmentation, motif_threshold
     generate_input(composer, instruments)
-    composer_entropy(composer, instruments)
+    expected_entropy, noise_entropy = composer_entropy(composer, instruments)
     crt_dir = get_dir(composer, instruments)
 
     temp_min = 10
-    temp_max = 100
+    temp_max = 80
     no_trials = 10
+    thresholds = [0.25, 0.33, 0.50]
 
-    xs = []
-    ys_wo = []
-    ys_w = []
-    for temperature in tqdm(range(temp_min, temp_max)):
-        temperature /= 10
-        xs.append(temperature)
-        cfg.config['pitch']['temperature'] = temperature
+    for threshold in thresholds:
+        motif_threshold = threshold
 
-        motif_augmentation = False
-        without_motifs = []
-        for _ in range(no_trials):
-            Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-            with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                sentence = file.read().split()
-            assert len(sentence) == predictions
-            without_motifs.append(sequence_entropy(sentence))
+        xs = []
+        ys_wo = []
+        ys_w = []
+        ys_ref = []
+        ys_nz = []
+        for temperature in tqdm(range(temp_min, temp_max)):
+            temperature /= 10
+            xs.append(temperature)
+            cfg.config['pitch']['temperature'] = temperature
 
-        motif_augmentation = True
-        with_motifs = []
-        for _ in range(no_trials):
-            Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-            with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                sentence = file.read().split()
-            assert len(sentence) == predictions
-            with_motifs.append(sequence_entropy(sentence))
+            motif_augmentation = False
+            without_motifs = []
+            for _ in range(no_trials):
+                Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
+                with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                    sentence = file.read().split()
+                assert len(sentence) == predictions
+                without_motifs.append(sequence_entropy(sentence))
 
-        ys_wo.append(np.mean(without_motifs))
-        ys_w.append(np.mean(with_motifs))
+            motif_augmentation = True
+            with_motifs = []
+            for _ in range(no_trials):
+                Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
+                with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                    sentence = file.read().split()
+                assert len(sentence) == predictions
+                with_motifs.append(sequence_entropy(sentence))
 
-    pth_plot = os.path.join(crt_dir, 'entropy_plot_motifs.png')
-    dpi = 72
-    fig_width = 3000
-    fig_height = 1000
-    plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
-    plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
-    plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
-    plt.xlabel('Sampling Temperature')
-    plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
-    plt.title(composer.capitalize())
-    plt.legend()
-    plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
-    plt.close('all')
+            ys_wo.append(np.mean(without_motifs))
+            ys_w.append(np.mean(with_motifs))
+            ys_ref.append(expected_entropy)
+            ys_nz.append(noise_entropy)
+
+        pth_plot = os.path.join(crt_dir, f'entropy_plot_motifs_thr_{motif_threshold:.2f}.png')
+        dpi = 72
+        fig_width = 3000
+        fig_height = 1000
+        plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
+        plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
+        plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
+        plt.plot(xs, ys_ref, linestyle='--', color='orange', label='Expected Entropy')
+        plt.plot(xs, ys_nz, linestyle='--', color='orange', label='Noise Entropy')
+        plt.xlabel('Sampling Temperature')
+        plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
+        plt.title(composer.capitalize())
+        plt.legend()
+        plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
+        plt.close('all')
 
 
 if __name__ == '__main__':
