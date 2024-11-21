@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from config import Config
-from data import get_dir, generate_input, generate_output
+from data import get_dir, generate_input
 from entropy import sequence_entropy, composer_entropy
 
 matplotlib.use('TkAgg')
@@ -24,7 +24,7 @@ cfg = Config()
 motif_augmentation = True
 motif_threshold = 0.25
 
-seed = 42
+seed = 0
 random.seed(seed)
 torch.manual_seed(seed)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -67,30 +67,37 @@ class TorchDataset(Dataset):
 
 
 class Worker:
-    def __init__(self, composer: str, instruments: [str], kind: str, mode: str):
-        crt_dir = get_dir(composer, instruments)
+    def __init__(self, composer: str, instruments: [str], kind: str):
+        self.composer = composer
+        self.instruments = instruments
+        self.kind = kind
 
-        data, vocabulary_size, map_direct, map_reverse = Worker.__load_data__(composer, instruments, kind)
+        self.crt_dir = get_dir(self.composer, self.instruments)
 
-        if not os.path.exists(os.path.join(crt_dir, kind + '_motifs.json')):
-            motifs = Worker.__motif_query_all__(map_direct, map_reverse, os.path.join(crt_dir, kind + '_input.txt'), kind == 'pitch')
-            with open(os.path.join(crt_dir, kind + '_motifs.json'), 'wt') as file:
-                json.dump(motifs, file, indent=4)
-        with open(os.path.join(crt_dir, kind + '_motifs.json'), 'rt') as file:
-            motifs = json.load(file)
+        self.data, self.vocabulary_size, self.map_direct, self.map_reverse = Worker.__load_data__(self.composer, self.instruments, self.kind)
 
-        x, y = Worker.__generate_xy__(data, cfg.config[kind]['number_of_steps'])
+        if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_motifs.json')):
+            self.motifs = Worker.__motif_query_all__(self.map_direct, self.map_reverse, os.path.join(self.crt_dir, self.kind + '_input.txt'), self.kind == 'pitch')
+            with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'wt') as file:
+                json.dump(self.motifs, file, indent=4)
+        with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'rt') as file:
+            self.motifs = json.load(file)
+
+        x, y = Worker.__generate_xy__(self.data, cfg.config[kind]['number_of_steps'])
         split = int(min(len(x), len(y)) * 0.8)
-        d_trn = TorchDataset(x[:split], y[:split])
-        d_val = TorchDataset(x[split:], y[split:])
+        self.d_trn = TorchDataset(x[:split], y[:split])
+        self.d_val = TorchDataset(x[split:], y[split:])
 
-        if mode == 'train' and not os.path.exists(os.path.join(crt_dir, kind + '_model.torch')):
-            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg.config[kind]['hidden_size'])
+        self.model = None
+
+    def train(self):
+        if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_model.torch')):
+            model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'])
             loss_function = CrossEntropyLoss()
             optimizer = Adam(model.parameters())
-            train_loader = DataLoader(dataset=d_trn, batch_size=cfg.config[kind]['batch_size'], shuffle=True)
-            valid_loader = DataLoader(dataset=d_val, batch_size=cfg.config[kind]['batch_size'])
-            csv_logger = os.path.join(crt_dir, kind + '_log.csv')
+            train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
+            valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
+            csv_logger = os.path.join(self.crt_dir, self.kind + '_log.csv')
 
             Worker.__train_model__(model,
                                    train_loader,
@@ -98,30 +105,31 @@ class Worker:
                                    loss_function,
                                    optimizer,
                                    csv_logger,
-                                   cfg.config[kind]['number_of_epochs'])
-            torch.save(model.state_dict(), os.path.join(crt_dir, kind + '_model.torch'))
+                                   cfg.config[self.kind]['number_of_epochs'])
+            torch.save(model.state_dict(), os.path.join(self.crt_dir, self.kind + '_model.torch'))
 
-        if mode == 'test':
-            model = TorchModule(vocabulary_size, map_direct, map_reverse, cfg.config[kind]['hidden_size']).cpu()
-            model.load_state_dict(torch.load(os.path.join(crt_dir, kind + '_model.torch')))
+    def test(self):
+        if self.model is None:
+            self.model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size']).cpu()
+            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch')))
 
-            number_of_steps = 0
-            for key in cfg.config:
-                number_of_steps = max(number_of_steps, cfg.config[key]['number_of_steps'])
-            with open(os.path.join(crt_dir, kind + '_input.txt'), 'rt') as file:
-                content = file.read().split()
-                idx = random.randrange(0, len(content) - number_of_steps)
-                inception = content[idx:idx + number_of_steps]
-            sentence_ids = [map_direct[element] for element in inception]
-            sentence = inception
-            for _ in range(predictions - number_of_steps):
-                i = sentence_ids[-number_of_steps:]
-                p, o = Worker.__motif_predict__(motifs, model, i, cfg.config[kind]['temperature'])
-                sentence_ids.append(o)
-                sentence.append(map_reverse[o])
-            sentence = ' '.join(sentence)
-            with open(os.path.join(crt_dir, kind + '_output.txt'), 'wt') as file:
-                file.write(sentence)
+        number_of_steps = 0
+        for key in cfg.config:
+            number_of_steps = max(number_of_steps, cfg.config[key]['number_of_steps'])
+        with open(os.path.join(self.crt_dir, self.kind + '_input.txt'), 'rt') as file:
+            content = file.read().split()
+            idx = random.randrange(0, len(content) - number_of_steps)
+            inception = content[idx:idx + number_of_steps]
+        sentence_ids = [self.map_direct[element] for element in inception]
+        sentence = inception
+        for _ in range(predictions - number_of_steps):
+            i = sentence_ids[-number_of_steps:]
+            p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'])
+            sentence_ids.append(o)
+            sentence.append(self.map_reverse[o])
+        sentence = ' '.join(sentence)
+        with open(os.path.join(self.crt_dir, self.kind + '_output.txt'), 'wt') as file:
+            file.write(sentence)
 
     @staticmethod
     def __read_sentences__(pth: str) -> [[str]]:
@@ -293,11 +301,7 @@ class Worker:
 
 def main_train(composer: str, instruments: [str]):
     generate_input(composer, instruments)
-    for kind in cfg.config:
-        Worker(composer=composer, instruments=instruments, kind=kind, mode='train')
-    for kind in cfg.config:
-        Worker(composer=composer, instruments=instruments, kind=kind, mode='test')
-    generate_output(composer, instruments)
+    Worker(composer=composer, instruments=instruments, kind='pitch').train()
 
 
 def main_test(composer: str, instruments: [str]):
@@ -306,64 +310,83 @@ def main_test(composer: str, instruments: [str]):
     expected_entropy, noise_entropy = composer_entropy(composer, instruments)
     crt_dir = get_dir(composer, instruments)
 
+    worker = Worker(composer=composer, instruments=instruments, kind='pitch')
+
     temp_min = 10
-    temp_max = 80
+    temp_max = 100
     no_trials = 10
-    thresholds = [0.25, 0.33, 0.50]
+    thresholds = [0.10, 0.25, 0.33, 0.50]
 
-    for threshold in thresholds:
-        motif_threshold = threshold
+    with open(os.path.join(crt_dir, 'results.csv'), 'wt') as report:
+        report.write('Motif Threshold, Sampling Temperature, Expected Entropy, Noise Entropy')
+        for trial in range(no_trials):
+            report.write(f', Without Motifs Trial #{trial + 1}')
+        for trial in range(no_trials):
+            report.write(f', With Motifs Trial #{trial + 1}')
+        report.write('\n')
+        report.flush()
 
-        xs = []
-        ys_wo = []
-        ys_w = []
-        ys_ref = []
-        ys_nz = []
-        for temperature in tqdm(range(temp_min, temp_max)):
-            temperature /= 10
-            xs.append(temperature)
-            cfg.config['pitch']['temperature'] = temperature
+        for threshold in thresholds:
+            motif_threshold = threshold
 
-            motif_augmentation = False
-            without_motifs = []
-            for _ in range(no_trials):
-                Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-                with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                    sentence = file.read().split()
-                assert len(sentence) == predictions
-                without_motifs.append(sequence_entropy(sentence))
+            xs = []
+            ys_wo = []
+            ys_w = []
+            ys_ref = []
+            ys_nz = []
+            for temperature in tqdm(range(temp_min, temp_max, 2)):
+                temperature /= 10
+                xs.append(temperature)
+                cfg.config['pitch']['temperature'] = temperature
 
-            motif_augmentation = True
-            with_motifs = []
-            for _ in range(no_trials):
-                Worker(composer=composer, instruments=instruments, kind='pitch', mode='test')
-                with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                    sentence = file.read().split()
-                assert len(sentence) == predictions
-                with_motifs.append(sequence_entropy(sentence))
+                motif_augmentation = False
+                without_motifs = []
+                for _ in range(no_trials):
+                    worker.test()
+                    with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                        sentence = file.read().split()
+                    assert len(sentence) == predictions
+                    without_motifs.append(sequence_entropy(sentence))
 
-            ys_wo.append(np.mean(without_motifs))
-            ys_w.append(np.mean(with_motifs))
-            ys_ref.append(expected_entropy)
-            ys_nz.append(noise_entropy)
+                motif_augmentation = True
+                with_motifs = []
+                for _ in range(no_trials):
+                    worker.test()
+                    with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
+                        sentence = file.read().split()
+                    assert len(sentence) == predictions
+                    with_motifs.append(sequence_entropy(sentence))
 
-        pth_plot = os.path.join(crt_dir, f'entropy_plot_motifs_thr_{motif_threshold:.2f}.png')
-        dpi = 72
-        fig_width = 3000
-        fig_height = 1000
-        plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
-        plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
-        plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
-        plt.plot(xs, ys_ref, linestyle='--', color='orange', label='Expected Entropy')
-        plt.plot(xs, ys_nz, linestyle='--', color='orange', label='Noise Entropy')
-        plt.xlabel('Sampling Temperature')
-        plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
-        plt.title(composer.capitalize())
-        plt.legend()
-        plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
-        plt.close('all')
+                ys_wo.append(np.mean(without_motifs))
+                ys_w.append(np.mean(with_motifs))
+                ys_ref.append(expected_entropy)
+                ys_nz.append(noise_entropy)
+
+                report.write(f'{threshold}, {temperature}, {expected_entropy}, {noise_entropy}')
+                for trial in range(no_trials):
+                    report.write(f', {without_motifs[trial]}')
+                for trial in range(no_trials):
+                    report.write(f', {with_motifs[trial]}')
+                report.write('\n')
+                report.flush()
+
+            pth_plot = os.path.join(crt_dir, f'entropy_plot_motifs_thr_{motif_threshold:.2f}.png')
+            dpi = 72
+            fig_width = 3000
+            fig_height = 1000
+            plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
+            plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
+            plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
+            plt.plot(xs, ys_ref, linestyle='--', color='orange', label='Expected Entropy')
+            plt.plot(xs, ys_nz, linestyle='--', color='orange', label='Noise Entropy')
+            plt.xlabel('Sampling Temperature')
+            plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
+            plt.title(composer.capitalize())
+            plt.legend()
+            plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
+            plt.close('all')
 
 
 if __name__ == '__main__':
-    # main_train(sys.argv[1], sys.argv[2:])
+    main_train(sys.argv[1], sys.argv[2:])
     main_test(sys.argv[1], sys.argv[2:])
