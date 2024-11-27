@@ -147,14 +147,13 @@ def main():
 
             pth_plot = os.path.join(crt_dir, f'entropy_plot_motifs_thr_{threshold:.2f}.png')
             dpi = 72
-            fig_width = 1000
-            fig_height = 500
-            ln_width = 2
+            fig_width = 768
+            fig_height = 512
+            ln_width = 3
             plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
             plt.plot(xs, ys_wo, linestyle='-', linewidth=ln_width, color='darkgray', label='Without Motifs')
             plt.plot(xs, ys_w, linestyle='-', linewidth=ln_width, color='lightgray', label='With Motifs')
             plt.plot(xs, ys_ref, linestyle='--', linewidth=ln_width, color='gray', label='Expected Entropy')
-            plt.plot(xs, ys_nz, linestyle=':', linewidth=ln_width, color='gray', label='Noise Entropy')
             plt.xlabel('Sampling Temperature')
             plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
             plt.title(sys.argv[1].capitalize())
