@@ -103,8 +103,8 @@ def composer_entropy(composer: str, instruments: [str]) -> (float, float):
     interp = interp1d(seq_len_int, x_values, kind='linear')
     x_interp = np.linspace(min(seq_len_int), max(seq_len_int), 500).tolist()
     y_interp = [interp(x) for x in x_interp]
-    plt.plot(x_interp, y_interp, linestyle='-', linewidth=ln_width, color='black', label='Interpolated Entropy')
-    plt.axvline(x=1000, linestyle='--', linewidth=ln_width, color='gray', label='Length 1000')
+    plt.plot(x_interp, y_interp, linestyle='-', linewidth=ln_width, color='blue', label='Interpolated Entropy')
+    plt.axvline(x=1000, linestyle='--', linewidth=ln_width, color='black', label='Length 1000')
     plt.xlabel('Sequence Length')
     plt.ylabel('Expected Entropy')
     plt.title(composer.capitalize())
@@ -119,7 +119,7 @@ def main():
     print(composer_entropy(sys.argv[1], sys.argv[2:]))
     crt_dir = get_dir(sys.argv[1], sys.argv[2:])
     no_trials = 10
-    thresholds = [0.10, 0.25, 0.33, 0.50]
+    thresholds = [0.10, 0.25]
     for threshold in thresholds:
         with open(os.path.join(crt_dir, 'results.csv'), 'rt') as report:
             report.readline()
@@ -151,9 +151,9 @@ def main():
             fig_height = 512
             ln_width = 3
             plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
-            plt.plot(xs, ys_wo, linestyle='-', linewidth=ln_width, color='darkgray', label='Without Motifs')
-            plt.plot(xs, ys_w, linestyle='-', linewidth=ln_width, color='lightgray', label='With Motifs')
-            plt.plot(xs, ys_ref, linestyle='--', linewidth=ln_width, color='gray', label='Expected Entropy')
+            plt.plot(xs, ys_wo, linestyle='-', linewidth=ln_width, color='red', label='Without Motifs')
+            plt.plot(xs, ys_w, linestyle='-', linewidth=ln_width, color='green', label='With Motifs')
+            plt.plot(xs, ys_ref, linestyle='--', linewidth=ln_width, color='orange', label='Expected Entropy')
             plt.xlabel('Sampling Temperature')
             plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
             plt.title(sys.argv[1].capitalize())

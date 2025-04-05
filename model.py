@@ -315,7 +315,7 @@ def main_test(composer: str, instruments: [str]):
     temp_min = 10
     temp_max = 100
     no_trials = 10
-    thresholds = [0.10, 0.25, 0.33, 0.50]
+    thresholds = [0.10, 0.25]
 
     with open(os.path.join(crt_dir, 'results.csv'), 'wt') as report:
         report.write('Motif Threshold, Sampling Temperature, Expected Entropy, Noise Entropy')
