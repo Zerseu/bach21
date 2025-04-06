@@ -171,8 +171,11 @@ def generate_output(composer: str, instruments: [str]):
     log('Generating output data...')
     with open(pth_pitch, 'rt') as file:
         pitches = file.read().split(' ')
-    with open(pth_duration, 'rt') as file:
-        durations = file.read().split(' ')
+    if os.path.exists(pth_duration):
+        with open(pth_duration, 'rt') as file:
+            durations = file.read().split(' ')
+    else:
+        durations = ['0.25' for _ in pitches]
     assert len(pitches) == len(durations)
     length = len(pitches)
 

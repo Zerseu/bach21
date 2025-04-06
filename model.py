@@ -16,13 +16,13 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from config import Config
-from data import get_dir, generate_input
+from data import get_dir, generate_input, generate_output
 from entropy import sequence_entropy, composer_entropy
 
 matplotlib.use('TkAgg')
 cfg = Config()
 motif_augmentation = True
-motif_threshold = 0.25
+motif_threshold = 0.10
 
 seed = 0
 random.seed(seed)
@@ -305,6 +305,11 @@ def main_train(composer: str, instruments: [str]):
 
 
 def main_test(composer: str, instruments: [str]):
+    Worker(composer=composer, instruments=instruments, kind='pitch').test()
+    generate_output(composer, instruments)
+
+
+def main_test_batch(composer: str, instruments: [str]):
     global motif_augmentation, motif_threshold
     generate_input(composer, instruments)
     expected_entropy, noise_entropy = composer_entropy(composer, instruments)
