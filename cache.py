@@ -42,6 +42,7 @@ def unravel_part(part) -> (str, [float], [float]):
 
 
 def rebuild_cache():
+    composer_dict = {}
     if not os.path.exists(CacheRoot):
         os.makedirs(CacheRoot)
     corpus_type = []
@@ -56,22 +57,13 @@ def rebuild_cache():
         except Exception:
             log('Skipping', pth, 'because it is corrupt...')
             continue
-        cache_file = os.path.splitext(composition.metadata.corpusFilePath)[0]
-        if ExternalCorpus is not None and cache_file.startswith(ExternalCorpus):
-            cache_file = cache_file[len(ExternalCorpus) + 1:]
-        cache_file_clean = ''
-        for ch in cache_file:
-            if ch.isalnum():
-                cache_file_clean += ch
-            else:
-                cache_file_clean += '_'
-        while cache_file != cache_file_clean:
-            cache_file = cache_file_clean
-            cache_file_clean = cache_file.replace('__', '_')
-        cache_file = cache_file.lower()
-        cache_file = os.path.join(CacheRoot, cache_file + '.json')
-        if os.path.exists(cache_file):
-            continue
+        file_name = os.path.splitext(composition.metadata.corpusFilePath)[0]
+        if ExternalCorpus is not None and file_name.startswith(ExternalCorpus):
+            file_name = file_name[len(ExternalCorpus) + 1:]
+        file_name = file_name.replace('\\', '/')
+        composer = file_name.split('/')[0].lower()
+        if composer not in composer_dict:
+            composer_dict[composer] = 0
         cache_dict = {}
         parts = instrument.partitionByInstrument(composition)
         for part in parts:
@@ -82,6 +74,9 @@ def rebuild_cache():
                 cache_dict[p[0]][0] += p[1]
                 cache_dict[p[0]][1] += p[2]
         if len(cache_dict) > 0:
+            composer_dict[composer] += 1
+            cache_file = f'{composer}_{composer_dict[composer]:04d}'
+            cache_file = os.path.join(CacheRoot, cache_file + '.json')
             with open(cache_file, 'wt') as file:
                 json.dump(cache_dict, file)
 

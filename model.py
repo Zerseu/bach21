@@ -28,7 +28,7 @@ seed = 0
 random.seed(seed)
 torch.manual_seed(seed)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-predictions = 1000
+predictions = 1024
 
 
 class TorchModule(Module):
