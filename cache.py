@@ -8,7 +8,7 @@ from tqdm import tqdm
 from config import log
 
 InternalCorpus: bool = True
-ExternalCorpus: Optional[str] = 'C:\\midi'  # Note: escaped backslash...
+ExternalCorpus: Optional[str] = 'C:\\midi'
 CacheRoot: str = 'bach21cache'
 
 if ExternalCorpus is not None:
@@ -51,7 +51,6 @@ def rebuild_cache():
     if ExternalCorpus is not None:
         corpus_type.append('local')
     for pth in tqdm(corpus.getPaths(name=corpus_type)):
-        # noinspection PyBroadException
         try:
             composition = corpus.parse(pth)
         except Exception:

@@ -5,8 +5,6 @@ import os
 import random
 import sys
 
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import regex as re
 import torch
@@ -17,9 +15,7 @@ from tqdm import tqdm
 
 from config import Config
 from data import get_dir, generate_input, generate_output
-from entropy import sequence_entropy, composer_entropy
 
-matplotlib.use('TkAgg')
 cfg = Config()
 motif_augmentation = True
 motif_threshold = 0.10
@@ -32,7 +28,9 @@ predictions = 1024
 
 
 class TorchModule(Module):
-    def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int):
+    def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int,
+                 lora_enable: bool = True, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
+                 lora_targets: str = "ih,hh,out,emb", add_causal_attn: bool = True, attn_heads: int = 4):
         super(TorchModule, self).__init__()
         self.vocabulary_size = vocabulary_size
         self.map_direct = map_direct
@@ -42,15 +40,63 @@ class TorchModule(Module):
         self.dropout = torch.nn.Dropout(p=0.25)
         self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
         self.linear = torch.nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
+
+        self.emb_post = None
+        self.post_attn = None
+
+        if lora_enable:
+            try:
+                from lora import inject_lora_into_lstm, inject_lora_into_linear
+                targets = tuple(x.strip() for x in lora_targets.split(',') if x.strip())
+                if "emb" in targets:
+                    self.emb_post = torch.nn.Linear(hidden_size, hidden_size, bias=False)
+                    torch.nn.init.eye_(self.emb_post.weight)
+                    inject_lora_into_linear(self.emb_post, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
+                if ("ih" in targets) or ("hh" in targets):
+                    inject_lora_into_lstm(self.lstm, r=lora_r, alpha=lora_alpha, dropout=lora_dropout,
+                                          targets=tuple(x for x in ("ih", "hh") if x in targets))
+                if "out" in targets:
+                    inject_lora_into_linear(self.linear, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
+            except Exception as e:
+                from config import log
+                log(f"[WARN] LoRA injection failed: {e}. Continuing without LoRA.")
+
+        if add_causal_attn:
+            self.post_attn = CausalSelfAttention(hidden_size, n_heads=attn_heads)
+
         self.to(device)
 
     def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
         x = self.embedding(x)
+        if self.emb_post is not None:
+            x = self.emb_post(x)
         x = self.dropout(x)
         x, _ = self.lstm(x)
+        if self.post_attn is not None:
+            x = self.post_attn(x)
         x = x[:, -1, :]
         x = self.linear(x)
         return x
+
+
+class CausalSelfAttention(torch.nn.Module):
+    def __init__(self, d_model: int, n_heads: int = 4):
+        super().__init__()
+        self.mha = torch.nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.ln = torch.nn.LayerNorm(d_model)
+        self.register_buffer("_mask", None, persistent=False)
+
+    def _causal_mask(self, T: int, device):
+        if (self._mask is None) or (self._mask.size(0) != T):
+            m = torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()
+            self._mask = m
+        return self._mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        T = x.size(1)
+        mask = self._causal_mask(T, x.device)
+        y, _ = self.mha(x, x, x, attn_mask=mask)
+        return self.ln(x + y)
 
 
 class TorchDataset(Dataset):
@@ -92,9 +138,19 @@ class Worker:
 
     def train(self):
         if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_model.torch')):
-            model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'])
+            model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'],
+                                lora_enable=cfg.config[self.kind].get('lora_enable', True),
+                                lora_r=cfg.config[self.kind].get('lora_r', 8),
+                                lora_alpha=cfg.config[self.kind].get('lora_alpha', 16),
+                                lora_dropout=cfg.config[self.kind].get('lora_dropout', 0.05),
+                                lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
+                                add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
+                                attn_heads=cfg.config[self.kind].get('attn_heads', 4))
             loss_function = CrossEntropyLoss()
-            optimizer = Adam(model.parameters())
+            from lora import mark_trainable_lora_only
+            if cfg.config[self.kind].get('lora_peft_only', True):
+                mark_trainable_lora_only(model)
+            optimizer = Adam([p for p in model.parameters() if p.requires_grad])
             train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
             valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
             csv_logger = os.path.join(self.crt_dir, self.kind + '_log.csv')
@@ -110,7 +166,14 @@ class Worker:
 
     def test(self):
         if self.model is None:
-            self.model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size']).cpu()
+            self.model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'],
+                                     lora_enable=cfg.config[self.kind].get('lora_enable', True),
+                                     lora_r=cfg.config[self.kind].get('lora_r', 8),
+                                     lora_alpha=cfg.config[self.kind].get('lora_alpha', 16),
+                                     lora_dropout=cfg.config[self.kind].get('lora_dropout', 0.05),
+                                     lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
+                                     add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
+                                     attn_heads=cfg.config[self.kind].get('attn_heads', 4)).cpu()
             self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch')))
 
         number_of_steps = 0
@@ -307,89 +370,6 @@ def main_train(composer: str, instruments: [str]):
 def main_test(composer: str, instruments: [str]):
     Worker(composer=composer, instruments=instruments, kind='pitch').test()
     generate_output(composer, instruments)
-
-
-def main_test_batch(composer: str, instruments: [str]):
-    global motif_augmentation, motif_threshold
-    generate_input(composer, instruments)
-    expected_entropy, noise_entropy = composer_entropy(composer, instruments)
-    crt_dir = get_dir(composer, instruments)
-
-    worker = Worker(composer=composer, instruments=instruments, kind='pitch')
-
-    temp_min = 10
-    temp_max = 100
-    no_trials = 10
-    thresholds = [0.10, 0.25]
-
-    with open(os.path.join(crt_dir, 'results.csv'), 'wt') as report:
-        report.write('Motif Threshold, Sampling Temperature, Expected Entropy, Noise Entropy')
-        for trial in range(no_trials):
-            report.write(f', Without Motifs Trial #{trial + 1}')
-        for trial in range(no_trials):
-            report.write(f', With Motifs Trial #{trial + 1}')
-        report.write('\n')
-        report.flush()
-
-        for threshold in thresholds:
-            motif_threshold = threshold
-
-            xs = []
-            ys_wo = []
-            ys_w = []
-            ys_ref = []
-            ys_nz = []
-            for temperature in tqdm(range(temp_min, temp_max, 2)):
-                temperature /= 10
-                xs.append(temperature)
-                cfg.config['pitch']['temperature'] = temperature
-
-                motif_augmentation = False
-                without_motifs = []
-                for _ in range(no_trials):
-                    worker.test()
-                    with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                        sentence = file.read().split()
-                    assert len(sentence) == predictions
-                    without_motifs.append(sequence_entropy(sentence))
-
-                motif_augmentation = True
-                with_motifs = []
-                for _ in range(no_trials):
-                    worker.test()
-                    with open(os.path.join(crt_dir, 'pitch_output.txt'), 'rt') as file:
-                        sentence = file.read().split()
-                    assert len(sentence) == predictions
-                    with_motifs.append(sequence_entropy(sentence))
-
-                ys_wo.append(np.mean(without_motifs))
-                ys_w.append(np.mean(with_motifs))
-                ys_ref.append(expected_entropy)
-                ys_nz.append(noise_entropy)
-
-                report.write(f'{threshold}, {temperature}, {expected_entropy}, {noise_entropy}')
-                for trial in range(no_trials):
-                    report.write(f', {without_motifs[trial]}')
-                for trial in range(no_trials):
-                    report.write(f', {with_motifs[trial]}')
-                report.write('\n')
-                report.flush()
-
-            pth_plot = os.path.join(crt_dir, f'entropy_plot_motifs_thr_{motif_threshold:.2f}.png')
-            dpi = 72
-            fig_width = 3000
-            fig_height = 1000
-            plt.figure(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
-            plt.plot(xs, ys_wo, linestyle='-', color='red', label='Without Motifs')
-            plt.plot(xs, ys_w, linestyle='-', color='green', label='With Motifs')
-            plt.plot(xs, ys_ref, linestyle='--', color='orange', label='Expected Entropy')
-            plt.plot(xs, ys_nz, linestyle='--', color='orange', label='Noise Entropy')
-            plt.xlabel('Sampling Temperature')
-            plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
-            plt.title(composer.capitalize())
-            plt.legend()
-            plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
-            plt.close('all')
 
 
 if __name__ == '__main__':
