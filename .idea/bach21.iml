@@ -9,7 +9,7 @@
       <excludeFolder url="file://$MODULE_DIR$/bach21data" />
       <excludeFolder url="file://$MODULE_DIR$/bach21unity" />
     </content>
-    <orderEntry type="jdk" jdkName="bach" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="C:\Users\cc_pl\miniconda3\envs\bach" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
