@@ -2,7 +2,6 @@ music21~=9.9.1
 tqdm~=4.67.1
 torch~=2.10.0
 numpy~=2.4.1
-regex~=2026.1.15
 matplotlib~=3.10.8
 pandas~=3.0.0
 scipy~=1.17.0

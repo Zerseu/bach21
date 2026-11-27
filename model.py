@@ -1,237 +1,130 @@
-import collections
+"""Training and sampling of a token model for one composer and instrument.
+
+Use the command-line scripts rather than this module directly:
+
+    python train.py bach violin                  # train bach21data/bach/violin/note_model.torch
+    python generate.py bach violin --length 1000 # write a 1000-note piece as MIDI and MusicXML
+
+Running ``python model.py bach violin`` still does both steps, as it did before those scripts existed.
+"""
 import json
 import os
 import random
 import sys
+from typing import Optional
 
-import music21
 import numpy as np
 import torch
-from torch.nn import Module, CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, Module
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from config import Config, log
-from data import get_dir, generate_input, generate_output, RestToken, TokenSeparator
+from config import Config, log, seed_everything
+from data import generate_input, generate_output, get_dir
+from motifs import motif_continuation, query_all_motifs
+from network import DEVICE, TorchModule
+from sequences import (IGNORE_INDEX, build_vocabulary, extra_sentences, generate_xy, read_sentences, split_data,
+                       transpose_sentences)
 
-cfg = Config()
-
-seed = 0
-random.seed(seed)
-torch.manual_seed(seed)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-predictions = 1024
-IGNORE_INDEX = -100
-
-
-class TorchModule(Module):
-    def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int,
-                 lora_enable: bool = False, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
-                 lora_targets: str = "ih,hh,out,emb", add_causal_attn: bool = True, attn_heads: int = 4,
-                 dropout: float = 0.25, output_dropout: float = 0.0, tie_weights: bool = False):
-        super(TorchModule, self).__init__()
-        self.vocabulary_size = vocabulary_size
-        self.map_direct = map_direct
-        self.map_reverse = map_reverse
-        self.hidden_size = hidden_size
-
-        self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
-        self.dropout = torch.nn.Dropout(p=dropout)
-        self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
-        self.output_dropout = torch.nn.Dropout(p=output_dropout)
-        self.linear = torch.nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
-        if tie_weights:
-            # Input and output embeddings share one matrix: fewer weights, and rare tokens learn from both ends.
-            torch.nn.init.uniform_(self.embedding.weight, -0.1, 0.1)
-            self.linear.weight = self.embedding.weight
-
-        self.emb_post = None
-        self.post_attn = None
-
-        if add_causal_attn:
-            self.post_attn = CausalSelfAttention(hidden_size, n_heads=attn_heads)
-
-        if lora_enable:
-            self.apply_lora(lora_r, lora_alpha, lora_dropout, lora_targets)
-
-        self.to(device)
-
-    def apply_lora(self, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
-                   lora_targets: str = "ih,hh,out,emb"):
-        # Wraps the current weights with LoRA adapters. Call it after loading a trained base model
-        # when fine-tuning, since the wrapped base weights are frozen.
-        from lora import inject_lora_into_lstm, inject_lora_into_linear
-        targets = tuple(x.strip() for x in lora_targets.split(',') if x.strip())
-        if "emb" in targets:
-            self.emb_post = torch.nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-            torch.nn.init.eye_(self.emb_post.weight)
-            inject_lora_into_linear(self.emb_post, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
-        if ("ih" in targets) or ("hh" in targets):
-            inject_lora_into_lstm(self.lstm, r=lora_r, alpha=lora_alpha, dropout=lora_dropout,
-                                  targets=tuple(x for x in ("ih", "hh") if x in targets))
-        if "out" in targets:
-            inject_lora_into_linear(self.linear, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
-        self.to(device)
-
-    def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
-        x = self.embedding(x)
-        if self.emb_post is not None:
-            x = self.emb_post(x)
-        x = self.dropout(x)
-        x, _ = self.lstm(x)
-        if self.post_attn is not None:
-            x = self.post_attn(x)
-        x = self.output_dropout(x)
-        # Logits for every timestep: (batch, time, vocabulary). Position t predicts token t + 1.
-        x = self.linear(x)
-        return x
-
-
-class CausalSelfAttention(torch.nn.Module):
-    def __init__(self, d_model: int, n_heads: int = 4):
-        super().__init__()
-        self.mha = torch.nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        self.ln = torch.nn.LayerNorm(d_model)
-        self.register_buffer("_mask", None, persistent=False)
-
-    def _causal_mask(self, T: int, device):
-        if (self._mask is None) or (self._mask.size(0) != T):
-            m = torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()
-            self._mask = m
-        return self._mask
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        T = x.size(1)
-        mask = self._causal_mask(T, x.device)
-        y, _ = self.mha(x, x, x, attn_mask=mask)
-        return self.ln(x + y)
+TRAIN_SEED = 0          # fixes the part order, the train/validation split, initial weights and batch order
+TRAIN_RATIO = 0.8       # share of the tokens (in whole parts) used for training; the rest is validation
+DEFAULT_LENGTH = 1000   # notes written by generate()
 
 
 class TorchDataset(Dataset):
+    """Input and target windows, kept on the training device."""
+
     def __init__(self, x: np.ndarray, y: np.ndarray):
         assert len(x) == len(y)
-        self.x = torch.from_numpy(x).long().to(device)
-        self.y = torch.from_numpy(y).long().to(device)
+        self.x = torch.from_numpy(x).long().to(DEVICE)
+        self.y = torch.from_numpy(y).long().to(DEVICE)
 
     def __len__(self) -> int:
-        return min(len(self.x), len(self.y))
+        return len(self.x)
 
-    def __getitem__(self, idx: int) -> (torch.LongTensor, torch.LongTensor):
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         return self.x[idx], self.y[idx]
 
 
 class Worker:
-    def __init__(self, composer: str, instruments: [str], kind: str):
+    """Everything for one model: its data folder, vocabulary, training and sampling.
+
+    kind is a section of config.ini and the prefix of its files: '<kind>_input.txt' (training tokens),
+    '<kind>_model.torch' (trained weights), '<kind>_vocabulary.json', '<kind>_log.csv' (per-epoch losses),
+    '<kind>_output.txt' (generated tokens).
+    """
+
+    def __init__(self, composer: str, instruments: list[str], kind: str = 'note', config: Optional[Config] = None):
         self.composer = composer
         self.instruments = instruments
         self.kind = kind
+        self.c = (config or Config())[kind]
+        self.crt_dir = get_dir(composer, instruments)
+        self.map_direct: dict[str, int] = {}
+        self.map_reverse: dict[int, str] = {}
+        self.model: Optional[TorchModule] = None
 
-        self.crt_dir = get_dir(self.composer, self.instruments)
+    def path(self, suffix: str) -> str:
+        return os.path.join(self.crt_dir, f'{self.kind}_{suffix}')
 
-        # Split by whole parts, not by windows, so overlapping windows never leak across the split.
-        # Only the training parts are transposed, so validation stays real, untransposed music.
-        sentences = Worker.__read_sentences__(os.path.join(self.crt_dir, self.kind + '_input.txt'))
-        sentences_trn, sentences_val = Worker.__split_data__(sentences, 0.8)
-        transpose = cfg.config[kind]['transpose']
-        if transpose > 0 and kind in ('pitch', 'note'):
-            sentences_trn = Worker.__transpose_sentences__(sentences_trn, sentences, transpose, kind)
-            log(f'Transposition: {len(sentences_trn)} training parts (shifts up to +/-{transpose} semitones)')
-        if cfg.config[kind]['extra_training_data'] and len(instruments) > 0 and kind in ('pitch', 'note'):
-            extra = Worker.__extra_sentences__(composer, kind, sentences, sentences_trn + sentences_val)
-            log(f'Extra training data: {len(extra)} parts of other {composer} instruments, {sum(map(len, extra))} tokens')
-            if cfg.config[kind]['transpose_extra'] > 0:
-                extra = Worker.__transpose_sentences__(extra, sentences, cfg.config[kind]['transpose_extra'], kind)
+    @property
+    def vocabulary_size(self) -> int:
+        return len(self.map_direct)
+
+    # ----- data -----
+
+    def training_sentences(self) -> tuple[list[list[str]], list[list[str]]]:
+        """Training and validation parts.
+
+        Validation is the last ~20% of the (shuffled) parts, untransposed. Training parts are also used
+        transposed, and can be extended with the composer's other parts that fit the instrument range.
+        """
+        sentences = read_sentences(self.path('input.txt'))
+        sentences_trn, sentences_val = split_data(sentences, TRAIN_RATIO)
+        pitched = self.kind in ('pitch', 'note')
+        if self.c['transpose'] > 0 and pitched:
+            sentences_trn = transpose_sentences(sentences_trn, sentences, self.c['transpose'], self.kind)
+            log(f"Transposition: {len(sentences_trn)} training parts (shifts up to +/-{self.c['transpose']} semitones)")
+        if self.c['extra_training_data'] and len(self.instruments) > 0 and pitched:
+            extra = extra_sentences(self.composer, self.kind, sentences, sentences_trn + sentences_val)
+            log(f'Extra training data: {len(extra)} parts of other {self.composer} instruments, '
+                f'{sum(map(len, extra))} tokens')
+            if self.c['transpose_extra'] > 0:
+                extra = transpose_sentences(extra, sentences, self.c['transpose_extra'], self.kind)
                 log(f'Extra training data after transposition: {len(extra)} parts')
             sentences_trn = sentences_trn + extra
-        self.map_direct = Worker.__build_vocabulary__(sentences_trn + sentences_val)
-        self.map_reverse = dict(zip(self.map_direct.values(), self.map_direct.keys()))
-        self.vocabulary_size = len(self.map_direct)
-        data_trn = [[self.map_direct[word] for word in sentence] for sentence in sentences_trn]
-        data_val = [[self.map_direct[word] for word in sentence] for sentence in sentences_val]
+        return sentences_trn, sentences_val
 
-        if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_motifs.json')):
-            self.motifs = Worker.__motif_query_all__(self.map_direct, self.map_reverse, os.path.join(self.crt_dir, self.kind + '_input.txt'), self.kind in ('pitch', 'note'))
-            with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'wt') as file:
-                json.dump(self.motifs, file, indent=4)
-        with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'rt') as file:
-            self.motifs = json.load(file)
+    def _set_vocabulary(self, map_direct: dict[str, int]):
+        self.map_direct = map_direct
+        self.map_reverse = {idx: word for word, idx in map_direct.items()}
 
-        number_of_steps = cfg.config[kind]['number_of_steps']
-        window_stride = cfg.config[kind]['window_stride'] or max(1, number_of_steps // 4)
-        self.d_trn = TorchDataset(*Worker.__generate_xy__(data_trn, number_of_steps, window_stride))
-        self.d_val = TorchDataset(*Worker.__generate_xy__(data_val, number_of_steps, window_stride))
+    def load_vocabulary(self):
+        """Reads the vocabulary saved with the model, or rebuilds it from the training data for models
+        trained before the vocabulary was saved."""
+        if os.path.exists(self.path('vocabulary.json')):
+            with open(self.path('vocabulary.json'), 'rt') as file:
+                self._set_vocabulary({word: idx for idx, word in enumerate(json.load(file))})
+        else:
+            sentences_trn, sentences_val = self.training_sentences()
+            self._set_vocabulary(build_vocabulary(sentences_trn + sentences_val))
 
-        self.model = None
+    def motifs(self) -> dict[str, int]:
+        """Frequent motifs of the input file, computed once and cached in '<kind>_motifs.json'."""
+        pth = self.path('motifs.json')
+        if not os.path.exists(pth):
+            motifs = query_all_motifs(self.path('input.txt'), self.map_direct, self.map_reverse,
+                                      self.kind in ('pitch', 'note'))
+            with open(pth, 'wt') as file:
+                json.dump(motifs, file, indent=4)
+        with open(pth, 'rt') as file:
+            return json.load(file)
 
-    def train(self):
-        if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_model.torch')):
-            c = cfg.config[self.kind]
-            model = self.__new_model__(lora_enable=False)
-            if c['base_model']:
-                log(f"Loading base model {c['base_model']}...")
-                model.load_state_dict(torch.load(c['base_model'], map_location=device))
-            if c['lora_enable']:
-                if not c['base_model']:
-                    log('[WARN] LoRA is enabled without a base_model, so the frozen base weights stay random.')
-                model.apply_lora(c['lora_r'], c['lora_alpha'], c['lora_dropout'], c['lora_targets'])
-                if c['lora_peft_only']:
-                    from lora import mark_trainable_lora_only
-                    mark_trainable_lora_only(model)
-            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total = sum(p.numel() for p in model.parameters())
-            log(f'Trainable params: {trainable:,} / {total:,}')
-            loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
-            optimizer = AdamW([p for p in model.parameters() if p.requires_grad],
-                              lr=c['learning_rate'], weight_decay=c['weight_decay'])
-            train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
-            valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
-            csv_logger = os.path.join(self.crt_dir, self.kind + '_log.csv')
-            pth_best = os.path.join(self.crt_dir, self.kind + '_model_best.torch')
+    # ----- model -----
 
-            Worker.__train_model__(model,
-                                   train_loader,
-                                   valid_loader,
-                                   loss_function,
-                                   optimizer,
-                                   csv_logger,
-                                   pth_best,
-                                   cfg.config[self.kind]['number_of_epochs'],
-                                   cfg.config[self.kind]['early_stopping_patience'],
-                                   c['grad_clip'],
-                                   c['lr_decay'])
-            # Only publish the final model once training has finished, so an interrupted run is retrained.
-            os.replace(pth_best, os.path.join(self.crt_dir, self.kind + '_model.torch'))
-
-    def test(self):
-        if self.model is None:
-            self.model = self.__new_model__(lora_enable=cfg.config[self.kind]['lora_enable'])
-            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch'), map_location=device))
-            self.model = self.model.cpu()
-        self.model.eval()
-
-        number_of_steps = 0
-        for key in cfg.config:
-            number_of_steps = max(number_of_steps, cfg.config[key]['number_of_steps'])
-        with open(os.path.join(self.crt_dir, self.kind + '_input.txt'), 'rt') as file:
-            content = file.read().split()
-            idx = random.randrange(0, len(content) - number_of_steps)
-            inception = content[idx:idx + number_of_steps]
-        sentence_ids = [self.map_direct[element] for element in inception]
-        sentence = inception
-        with torch.no_grad():
-            for _ in range(predictions - number_of_steps):
-                i = sentence_ids[-number_of_steps:]
-                p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'],
-                                                cfg.config[self.kind]['top_p'], cfg.config[self.kind]['motif_threshold'])
-                sentence_ids.append(o)
-                sentence.append(self.map_reverse[o])
-        sentence = ' '.join(sentence)
-        with open(os.path.join(self.crt_dir, self.kind + '_output.txt'), 'wt') as file:
-            file.write(sentence)
-
-    def __new_model__(self, lora_enable: bool) -> TorchModule:
-        c = cfg.config[self.kind]
+    def new_model(self, lora_enable: bool) -> TorchModule:
+        c = self.c
         return TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, c['hidden_size'],
                            lora_enable=lora_enable,
                            lora_r=c['lora_r'],
@@ -244,262 +137,222 @@ class Worker:
                            output_dropout=c['output_dropout'],
                            tie_weights=c['tie_weights'])
 
-    @staticmethod
-    def __read_sentences__(pth: str) -> [[str]]:
-        data = []
-        with open(pth, 'rt') as file:
-            for sentence in file.read().strip('\n').split('\n'):
-                data.append(sentence.split())
-        return data
+    def train(self, retrain: bool = False) -> str:
+        """Trains the model and returns the path of '<kind>_model.torch'.
 
-    @staticmethod
-    def __build_vocabulary__(sentences: [[str]]) -> dict[str, int]:
-        counter = collections.Counter(word for sentence in sentences for word in sentence)
-        count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
-        elements, _ = list(zip(*count_pairs))
-        map_direct = dict(zip(elements, range(len(elements))))
-        assert '' not in map_direct
-        return map_direct
+        An existing model is kept unless retrain is True. The best epoch (lowest validation loss) is the
+        one saved, and the model file only appears once training has finished, so an interrupted run
+        leaves any previous model in place.
+        """
+        pth_model = self.path('model.torch')
+        if os.path.exists(pth_model) and not retrain:
+            log(f'{pth_model} already exists, skipping training (use --retrain to train again).')
+            return pth_model
+        c = self.c
 
-    @staticmethod
-    def __extra_sentences__(composer: str, kind: str, reference: [[str]], vocabulary: [[str]]) -> [[str]]:
-        # Parts of the composer's other instruments, used for training only. A part is kept when it fits in
-        # the pitch range of the reference parts, uses only tokens they already use (so the vocabulary does
-        # not grow), and shares no 12-token run with any reference part (this drops the reference parts
-        # themselves and lines that double them, so nothing leaks into validation).
-        generate_input(composer, [])
-        sentences = Worker.__read_sentences__(os.path.join(get_dir(composer, []), kind + '_input.txt'))
-        known = set(word for sentence in vocabulary for word in sentence)
-        run = 12
-        seen = set(tuple(sentence[i:i + run]) for sentence in reference for i in range(len(sentence) - run + 1))
-        in_range = Worker.__transpose_sentences__(
-            [sentence for sentence in sentences if all(word in known for word in sentence)], reference, 0, kind)
-        return [sentence for sentence in in_range
-                if not any(tuple(sentence[i:i + run]) in seen for i in range(len(sentence) - run + 1))]
+        sentences_trn, sentences_val = self.training_sentences()
+        self._set_vocabulary(build_vocabulary(sentences_trn + sentences_val))
+        log(f'Vocabulary: {self.vocabulary_size} tokens')
+        data_trn = [[self.map_direct[word] for word in sentence] for sentence in sentences_trn]
+        data_val = [[self.map_direct[word] for word in sentence] for sentence in sentences_val]
+        if c['motif_threshold'] > 0:
+            self.motifs()
 
-    @staticmethod
-    def __transpose_sentences__(sentences: [[str]], reference: [[str]], max_shift: int, kind: str) -> [[str]]:
-        # Adds copies of each part shifted by -max_shift..+max_shift semitones. A copy is kept only if
-        # every pitch stays inside the pitch range of the real corpus, so the instrument range is respected.
-        cache = {}
+        window_stride = c['window_stride'] or max(1, c['number_of_steps'] // 4)
+        d_trn = TorchDataset(*generate_xy(data_trn, c['number_of_steps'], window_stride))
+        d_val = TorchDataset(*generate_xy(data_val, c['number_of_steps'], window_stride))
+        log(f'Windows: {len(d_trn)} training, {len(d_val)} validation')
 
-        def split(word: str) -> (str, str):
-            if kind == 'note':
-                pitch, duration = word.rsplit(TokenSeparator, 1)
-                return pitch, TokenSeparator + duration
-            return word, ''
+        model = self.new_model(lora_enable=False)
+        if c['base_model']:
+            log(f"Loading base model {c['base_model']}...")
+            model.load_state_dict(torch.load(c['base_model'], map_location=DEVICE))
+        if c['lora_enable']:
+            if not c['base_model']:
+                log('[WARN] LoRA is enabled without a base_model, so the frozen base weights stay random.')
+            model.apply_lora(c['lora_r'], c['lora_alpha'], c['lora_dropout'], c['lora_targets'])
+            if c['lora_peft_only']:
+                from lora import mark_trainable_lora_only
+                mark_trainable_lora_only(model)
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        log(f'Trainable params: {trainable:,} / {total:,}')
 
-        def to_midi(pitch: str) -> int:
-            if pitch not in cache:
-                cache[pitch] = music21.pitch.Pitch(pitch).midi
-            return cache[pitch]
+        optimizer = AdamW([p for p in model.parameters() if p.requires_grad],
+                          lr=c['learning_rate'], weight_decay=c['weight_decay'])
+        pth_best = self.path('model_best.torch')
+        train_model(model,
+                    DataLoader(dataset=d_trn, batch_size=c['batch_size'], shuffle=True),
+                    DataLoader(dataset=d_val, batch_size=c['batch_size']),
+                    optimizer,
+                    self.path('log.csv'),
+                    pth_best,
+                    c['number_of_epochs'],
+                    c['early_stopping_patience'],
+                    c['grad_clip'],
+                    c['lr_decay'])
+        with open(self.path('vocabulary.json'), 'wt') as file:
+            json.dump([self.map_reverse[idx] for idx in range(self.vocabulary_size)], file)
+        os.replace(pth_best, pth_model)
+        log(f'Saved {pth_model}')
+        return pth_model
 
-        pitches = [to_midi(p) for sentence in reference for p, _ in map(split, sentence) if p != RestToken]
-        lowest, highest = min(pitches), max(pitches)
-        names = {m: str(music21.note.Note(m).nameWithOctave) for m in range(lowest, highest + 1)}
-        result = []
-        for sentence in sentences:
-            words = [split(word) for word in sentence]
-            midis = [to_midi(p) for p, _ in words if p != RestToken]
-            for shift in range(-max_shift, max_shift + 1):
-                if not midis or min(midis) + shift < lowest or max(midis) + shift > highest:
-                    continue
-                if shift == 0:
-                    result.append(sentence)
-                    continue
-                result.append([word if p == RestToken else names[to_midi(p) + shift] + d
-                               for word, (p, d) in zip(sentence, words)])
-        return result
+    def load(self):
+        """Loads the trained model for sampling (on the CPU)."""
+        pth_model = self.path('model.torch')
+        if not os.path.exists(pth_model):
+            raise FileNotFoundError(f'{pth_model} does not exist. Train the model first (python train.py '
+                                    f'{self.composer} {" ".join(self.instruments)}).')
+        self.load_vocabulary()
+        self.model = self.new_model(lora_enable=self.c['lora_enable'])
+        self.model.load_state_dict(torch.load(pth_model, map_location=DEVICE))
+        self.model = self.model.cpu()
+        self.model.eval()
 
-    @staticmethod
-    def __split_data__(data: [list], ratio: float) -> ([list], [list]):
-        total = sum(len(sentence) for sentence in data)
-        running = 0
-        for idx, sentence in enumerate(data):
-            if running >= total * ratio:
-                return data[:idx], data[idx:]
-            running += len(sentence)
-        return data[:-1], data[-1:]
+    def generate(self, length: int = DEFAULT_LENGTH, seed: int = 0, keep_prompt: bool = False) -> str:
+        """Samples `length` new tokens and writes them to '<kind>_output.txt'; returns its path.
 
-    @staticmethod
-    def __generate_xy__(data: [[int]], number_of_steps: int, window_stride: int) -> (np.ndarray, np.ndarray):
-        # Each sample is a window of number_of_steps tokens; its target is the same window shifted by one,
-        # so the loss is computed at every timestep instead of only the last one.
-        # Parts shorter than a window are right-padded: inputs with token 0, targets with IGNORE_INDEX.
-        # The model is causal, so padding at the end never influences the real positions.
-        x = []
-        y = []
-        for sentence in data:
-            if len(sentence) < 2:
-                continue
-            last_start = max(0, len(sentence) - 1 - number_of_steps)
-            starts = list(range(0, last_start + 1, window_stride))
-            if starts[-1] != last_start:
-                starts.append(last_start)
-            for start in starts:
-                window = sentence[start:start + number_of_steps + 1]
-                pad = number_of_steps + 1 - len(window)
-                x.append(window[:-1] + [0] * pad)
-                y.append(window[1:] + [IGNORE_INDEX] * pad)
-        x = np.array(x, dtype=int).reshape((-1, number_of_steps))
-        y = np.array(y, dtype=int).reshape((-1, number_of_steps))
-        assert len(x) == len(y)
-        return x, y
+        The model is primed with number_of_steps consecutive tokens from a random place in the training
+        file (chosen by `seed`). The prompt is real music, so it is only written when keep_prompt is True.
+        """
+        if self.model is None:
+            self.load()
+        seed_everything(seed)
+        number_of_steps = self.c['number_of_steps']
+        with open(self.path('input.txt'), 'rt') as file:
+            content = file.read().split()
+        start = random.randrange(0, len(content) - number_of_steps)
+        prompt = content[start:start + number_of_steps]
+        sentence_ids = [self.map_direct[word] for word in prompt]
+        motifs = self.motifs() if self.c['motif_threshold'] > 0 else {}
 
-    @staticmethod
-    def __train_model__(model: Module,
-                        train_loader: DataLoader,
-                        valid_loader: DataLoader,
-                        loss_function: CrossEntropyLoss,
-                        optimizer: AdamW,
-                        csv_logger: str,
-                        pth_best: str,
-                        num_epochs: int = 10,
-                        patience: int = 0,
-                        grad_clip: float = 0.0,
-                        lr_decay: float = 0.0):
-        best_valid_loss = float('inf')
-        epochs_without_improvement = 0
-        with open(csv_logger, 'wt') as file:
-            file.write('epoch,train_loss,validation_loss,best\n')
-            for epoch in tqdm(range(num_epochs)):
-                model.train()
-                total_train_loss = 0.0
-                total_train_tokens = 0
-                for inputs, labels in train_loader:
-                    optimizer.zero_grad()
-                    outputs = model(inputs)
-                    tokens = int((labels != IGNORE_INDEX).sum())
-                    loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
-                    (loss / max(tokens, 1)).backward()
-                    if grad_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                    optimizer.step()
-                    total_train_loss += loss.item()
-                    total_train_tokens += tokens
-
-                model.eval()
-                total_valid_loss = 0.0
-                total_valid_tokens = 0
-                with torch.no_grad():
-                    for inputs, labels in valid_loader:
-                        outputs = model(inputs)
-                        loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
-                        total_valid_loss += loss.item()
-                        total_valid_tokens += int((labels != IGNORE_INDEX).sum())
-
-                # Per-token averages, so padded positions and uneven batches do not skew the numbers.
-                avg_train_loss = total_train_loss / max(total_train_tokens, 1)
-                avg_valid_loss = total_valid_loss / max(total_valid_tokens, 1)
-                improved = avg_valid_loss < best_valid_loss
-                if improved:
-                    best_valid_loss = avg_valid_loss
-                    epochs_without_improvement = 0
-                    torch.save(model.state_dict(), pth_best)
-                else:
-                    epochs_without_improvement += 1
-                    if 0 < lr_decay < 1:
-                        # Go back to the best weights and continue with a smaller learning rate,
-                        # instead of carrying on from weights that have started to overfit.
-                        model.load_state_dict(torch.load(pth_best, map_location=device))
-                        for group in optimizer.param_groups:
-                            group['lr'] *= lr_decay
-                file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f},{int(improved)}\n')
-                file.flush()
-                if 0 < patience <= epochs_without_improvement:
-                    break
-
-    @staticmethod
-    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0, top_p: float = 1.0) -> (float, int):
-        # Temperature sampling, optionally restricted to the smallest set of tokens whose
-        # probabilities add up to top_p (nucleus sampling), which cuts off the unlikely tail.
-        pred = pred.detach().numpy().astype(np.float64)[0] / temp
-        pred = np.exp(pred - np.max(pred))
-        pred = pred / np.sum(pred)
-        prob_max = np.max(pred)
-        if top_p < 1.0:
-            order = np.argsort(-pred)
-            keep = order[:int(np.searchsorted(np.cumsum(pred[order]), top_p)) + 1]
-            nucleus = np.zeros_like(pred)
-            nucleus[keep] = pred[keep]
-            pred = nucleus / np.sum(nucleus)
-        return prob_max, int(np.random.choice(len(pred), p=pred))
-
-    @staticmethod
-    def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0, top_p: float = 1.0) -> (float, int):
+        generated = []
         with torch.no_grad():
-            pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())[:, -1, :]
-        return Worker.__temp_sample__(pred, temp, top_p)
+            for _ in tqdm(range(length), desc='Generating'):
+                token = self.next_token(sentence_ids[-number_of_steps:], motifs)
+                sentence_ids.append(token)
+                generated.append(self.map_reverse[token])
 
-    @staticmethod
-    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0,
-                          top_p: float = 1.0, motif_threshold: float = 0.10) -> (float, int):
-        # When the model is unsure (top probability at or below motif_threshold), continue a frequent
-        # corpus motif instead. motif_threshold = 0 turns this off.
-        prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp, top_p)
-        if prob_max > motif_threshold:
-            return prob_max, prob_argmax
+        pth_output = self.path('output.txt')
+        with open(pth_output, 'wt') as file:
+            file.write(' '.join(prompt + generated if keep_prompt else generated))
+        return pth_output
 
-        motifs_str = list(motifs.keys())
-        for motif in motifs_str:
-            motif = [model.map_direct[word] for word in motif.split()]
-            length = min(len(seq), len(motif) - 1)
-            if seq[-length:] == motif[-length - 1:-1]:
-                return 1.0, motif[-1]
-
-        return 0.0, prob_argmax
-
-    @staticmethod
-    def __motif_query_filter__(motif_int: [int]) -> bool:
-        return len(set(motif_int)) > 1
-
-    @staticmethod
-    def __motif_query_any__(map_direct: dict[str, int],
-                            map_reverse: dict[int, str],
-                            pth: str,
-                            motif_length: int,
-                            motif_filter: bool = False) -> dict[str, int]:
-        elems_int = []
-        with open(pth, 'rt') as file:
-            for sentence in file.read().strip('\n').split('\n'):
-                for word in sentence.split():
-                    elems_int.append(map_direct[word])
-        counts = collections.Counter(tuple(elems_int[motif_start:motif_start + motif_length])
-                                     for motif_start in range(len(elems_int) - motif_length))
-        motifs: dict[str, int] = {}
-        for motif_int, motif_occ in counts.items():
-            if motif_filter and not Worker.__motif_query_filter__(list(motif_int)):
-                continue
-            if motif_occ > 1:
-                motifs[' '.join(map_reverse[word] for word in motif_int)] = motif_occ
-
-        return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
-
-    @staticmethod
-    def __motif_query_all__(map_direct: dict[str, int],
-                            map_reverse: dict[int, str],
-                            pth: str,
-                            motif_filter: bool = False) -> dict[str, int]:
-        length_lower_bound = 4
-        length_upper_bound = 8
-        motifs = {}
-
-        for motif_length in range(length_lower_bound, length_upper_bound + 1):
-            motifs.update(Worker.__motif_query_any__(map_direct, map_reverse, pth, motif_length, motif_filter))
-
-        return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
+    def next_token(self, seq: list[int], motifs: dict[str, int]) -> int:
+        """Samples the next token id. When the model is unsure (top probability at or below
+        motif_threshold) a matching corpus motif is continued instead, if there is one."""
+        with torch.no_grad():
+            logits = self.model(torch.tensor([seq], dtype=torch.long))[:, -1, :]
+        prob_max, token = sample(logits, self.c['temperature'], self.c['top_p'])
+        if prob_max <= self.c['motif_threshold']:
+            continuation = motif_continuation(motifs, self.map_direct, seq)
+            if continuation is not None:
+                return continuation
+        return token
 
 
-def main_train(composer: str, instruments: [str]):
+def sample(logits: torch.Tensor, temperature: float = 1.0, top_p: float = 1.0) -> tuple[float, int]:
+    """Temperature sampling from logits of shape (1, vocabulary), optionally restricted to the smallest set
+    of tokens whose probabilities add up to top_p (nucleus sampling). Returns (top probability, token id)."""
+    pred = logits.detach().numpy().astype(np.float64)[0] / temperature
+    pred = np.exp(pred - np.max(pred))
+    pred = pred / np.sum(pred)
+    prob_max = float(np.max(pred))
+    if top_p < 1.0:
+        order = np.argsort(-pred)
+        keep = order[:int(np.searchsorted(np.cumsum(pred[order]), top_p)) + 1]
+        nucleus = np.zeros_like(pred)
+        nucleus[keep] = pred[keep]
+        pred = nucleus / np.sum(nucleus)
+    return prob_max, int(np.random.choice(len(pred), p=pred))
+
+
+def train_model(model: Module,
+                train_loader: DataLoader,
+                valid_loader: DataLoader,
+                optimizer: AdamW,
+                csv_logger: str,
+                pth_best: str,
+                num_epochs: int = 10,
+                patience: int = 0,
+                grad_clip: float = 0.0,
+                lr_decay: float = 0.0):
+    """The training loop. Losses are per-token averages over all non-padding positions.
+
+    After each epoch the weights are saved to pth_best if the validation loss improved. Otherwise, with
+    0 < lr_decay < 1, the best weights are reloaded and the learning rate is multiplied by lr_decay.
+    Training stops after `patience` epochs in a row without improvement (0 means never early).
+    One line per epoch goes to csv_logger: epoch, train_loss, validation_loss, best.
+    """
+    loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
+    best_valid_loss = float('inf')
+    epochs_without_improvement = 0
+    with open(csv_logger, 'wt') as file:
+        file.write('epoch,train_loss,validation_loss,best\n')
+        for epoch in tqdm(range(num_epochs), desc='Epochs'):
+            model.train()
+            total_train_loss = 0.0
+            total_train_tokens = 0
+            for inputs, labels in train_loader:
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                tokens = int((labels != IGNORE_INDEX).sum())
+                loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
+                (loss / max(tokens, 1)).backward()
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                total_train_loss += loss.item()
+                total_train_tokens += tokens
+
+            model.eval()
+            total_valid_loss = 0.0
+            total_valid_tokens = 0
+            with torch.no_grad():
+                for inputs, labels in valid_loader:
+                    outputs = model(inputs)
+                    loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
+                    total_valid_loss += loss.item()
+                    total_valid_tokens += int((labels != IGNORE_INDEX).sum())
+
+            avg_train_loss = total_train_loss / max(total_train_tokens, 1)
+            avg_valid_loss = total_valid_loss / max(total_valid_tokens, 1)
+            improved = avg_valid_loss < best_valid_loss
+            if improved:
+                best_valid_loss = avg_valid_loss
+                epochs_without_improvement = 0
+                torch.save(model.state_dict(), pth_best)
+            else:
+                epochs_without_improvement += 1
+                if 0 < lr_decay < 1:
+                    model.load_state_dict(torch.load(pth_best, map_location=DEVICE))
+                    for group in optimizer.param_groups:
+                        group['lr'] *= lr_decay
+            file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f},{int(improved)}\n')
+            file.flush()
+            log(f'Epoch {epoch + 1}: train {avg_train_loss:.4f}, validation {avg_valid_loss:.4f}'
+                f'{" (best)" if improved else ""}')
+            if 0 < patience <= epochs_without_improvement:
+                break
+
+
+def main_train(composer: str, instruments: list[str], kind: str = 'note', retrain: bool = False) -> str:
+    """Builds the token files if needed and trains the model."""
+    seed_everything(TRAIN_SEED)
     generate_input(composer, instruments)
-    Worker(composer=composer, instruments=instruments, kind='note').train()
+    return Worker(composer, instruments, kind).train(retrain=retrain)
 
 
-def main_test(composer: str, instruments: [str]):
-    Worker(composer=composer, instruments=instruments, kind='note').test()
-    generate_output(composer, instruments)
+def main_generate(composer: str, instruments: list[str], kind: str = 'note', length: int = DEFAULT_LENGTH,
+                  seed: int = 0, keep_prompt: bool = False) -> tuple[str, str, str]:
+    """Generates a piece and writes it as text, MIDI and MusicXML; returns the three paths."""
+    pth_text = Worker(composer, instruments, kind).generate(length=length, seed=seed, keep_prompt=keep_prompt)
+    pth_midi, pth_xml = generate_output(composer, instruments, kind)
+    return pth_text, pth_midi, pth_xml
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        sys.exit('Usage: python model.py COMPOSER [INSTRUMENT ...]')
     main_train(sys.argv[1], sys.argv[2:])
-    main_test(sys.argv[1], sys.argv[2:])
+    main_generate(sys.argv[1], sys.argv[2:])

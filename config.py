@@ -1,56 +1,104 @@
+"""Project paths, the per-model settings read from config.ini, logging and seeding.
+
+config.ini has one section per model kind (``note``, ``pitch``, ``duration``). Every key a section
+leaves out falls back to the default in ``DEFAULTS`` below, so a section only needs the values that
+differ. Only the ``note`` model is used by the training and generation scripts; the ``pitch`` and
+``duration`` sections are kept for experiments with separate pitch and rhythm models.
+"""
 import configparser
+import os
+import random
 from sys import stdout
+
+import numpy as np
+import torch
+
+# All paths are relative to the project folder, so the scripts work from any current directory.
+ROOT: str = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH: str = os.path.join(ROOT, 'config.ini')
+LOG_PATH: str = os.path.join(ROOT, 'bach21.log')
+CACHE_ROOT: str = os.path.join(ROOT, 'bach21cache')
+CACHE_ZIP: str = os.path.join(ROOT, 'bach21cache.zip')
+DATA_ROOT: str = os.path.join(ROOT, 'bach21data')
+
+# Key -> default value. The type of the default decides how the value in config.ini is parsed.
+# None marks a required key.
+DEFAULTS: dict = {
+    # Network and training
+    'number_of_steps': None,          # tokens per training window and generation context
+    'batch_size': None,
+    'hidden_size': None,              # embedding, LSTM and attention width
+    'number_of_epochs': None,
+    'window_stride': 0,               # 0 means number_of_steps // 4
+    'early_stopping_patience': 0,     # stop after this many epochs without improvement; 0 never stops early
+    'learning_rate': 1e-3,
+    'weight_decay': 0.0,              # AdamW weight decay
+    'grad_clip': 0.0,                 # gradient norm clipping; 0 turns it off
+    'lr_decay': 0.0,                  # on a non-improving epoch reload the best weights and scale the LR by this
+    'dropout': 0.25,                  # after the embedding
+    'output_dropout': 0.0,            # before the output layer
+    'tie_weights': False,             # share the input embedding and output layer weights
+    'add_causal_attn': True,          # causal self-attention layer after the LSTM
+    'attn_heads': 4,
+    # LoRA fine-tuning
+    'lora_enable': False,
+    'lora_r': 8,
+    'lora_alpha': 16,
+    'lora_dropout': 0.05,
+    'lora_targets': 'ih,hh,out,emb',
+    'lora_peft_only': False,          # train only the adapters, biases and LayerNorm
+    'base_model': '',                 # model.torch to start from (needed for LoRA fine-tuning)
+    # Training data
+    'transpose': 0,                   # also train on copies shifted by up to +/- this many semitones
+    'extra_training_data': False,     # add the composer's other parts that fit the instrument's range
+    'transpose_extra': 0,             # transposition for those extra parts
+    # Sampling
+    'temperature': None,
+    'top_p': 1.0,                     # nucleus sampling; 1 turns it off
+    'motif_threshold': 0.10,          # continue a corpus motif when the top probability is at or below this
+}
 
 
 class Config:
-    def __init__(self, config: str = 'config.ini'):
-        parser = configparser.ConfigParser()
-        parser.read(config)
-        self.config = {}
-        sections = parser.sections()
-        for s in range(len(sections)):
-            dictionary = dict(number_of_steps=parser.getint(sections[s], 'number_of_steps'),
-                              batch_size=parser.getint(sections[s], 'batch_size'),
-                              hidden_size=parser.getint(sections[s], 'hidden_size'),
-                              number_of_epochs=parser.getint(sections[s], 'number_of_epochs'),
-                              temperature=parser.getfloat(sections[s], 'temperature'),
-                              lora_enable=parser.getboolean(sections[s], 'lora_enable', fallback=False),
-                              lora_r=parser.getint(sections[s], 'lora_r', fallback=8),
-                              lora_alpha=parser.getint(sections[s], 'lora_alpha', fallback=16),
-                              lora_dropout=parser.getfloat(sections[s], 'lora_dropout', fallback=0.05),
-                              lora_targets=parser.get(sections[s], 'lora_targets', fallback='ih,hh,out,emb'),
-                              add_causal_attn=parser.getboolean(sections[s], 'add_causal_attn', fallback=True),
-                              attn_heads=parser.getint(sections[s], 'attn_heads', fallback=4),
-                              lora_peft_only=parser.getboolean(sections[s], 'lora_peft_only', fallback=False),
-                              base_model=parser.get(sections[s], 'base_model', fallback=''),
-                              window_stride=parser.getint(sections[s], 'window_stride', fallback=0),
-                              early_stopping_patience=parser.getint(sections[s], 'early_stopping_patience', fallback=0),
-                              transpose=parser.getint(sections[s], 'transpose', fallback=0),
-                              tie_weights=parser.getboolean(sections[s], 'tie_weights', fallback=False),
-                              dropout=parser.getfloat(sections[s], 'dropout', fallback=0.25),
-                              output_dropout=parser.getfloat(sections[s], 'output_dropout', fallback=0.0),
-                              learning_rate=parser.getfloat(sections[s], 'learning_rate', fallback=1e-3),
-                              weight_decay=parser.getfloat(sections[s], 'weight_decay', fallback=0.0),
-                              grad_clip=parser.getfloat(sections[s], 'grad_clip', fallback=0.0),
-                              top_p=parser.getfloat(sections[s], 'top_p', fallback=1.0),
-                              extra_training_data=parser.getboolean(sections[s], 'extra_training_data', fallback=False),
-                              transpose_extra=parser.getint(sections[s], 'transpose_extra', fallback=0),
-                              lr_decay=parser.getfloat(sections[s], 'lr_decay', fallback=0.0),
-                              motif_threshold=parser.getfloat(sections[s], 'motif_threshold', fallback=0.10))
-            self.config[sections[s]] = dictionary
+    """Settings from config.ini, as ``Config().config[kind][key]``."""
 
-    def __str__(self):
-        result = ''
-        result += f"ns_{self.config['pitch']['number_of_steps']}_"
-        result += f"bs_{self.config['pitch']['batch_size']}_"
-        result += f"hs_{self.config['pitch']['hidden_size']}_"
-        result += f"ne_{self.config['pitch']['number_of_epochs']}_"
-        result += f"tmp_{self.config['pitch']['temperature']:.1f}"
-        result += f"_lora{int(self.config['pitch'].get('lora_enable', False))}r{self.config['pitch'].get('lora_r', 8)}"
-        return result
+    def __init__(self, config: str = CONFIG_PATH):
+        parser = configparser.ConfigParser()
+        if not parser.read(config):
+            raise FileNotFoundError(f'Config file not found: {config}')
+        self.config: dict[str, dict] = {}
+        for section in parser.sections():
+            self.config[section] = {key: Config._read(parser, section, key, default)
+                                    for key, default in DEFAULTS.items()}
+
+    def __getitem__(self, kind: str) -> dict:
+        return self.config[kind]
+
+    @staticmethod
+    def _read(parser: configparser.ConfigParser, section: str, key: str, default):
+        if default is None:
+            if not parser.has_option(section, key):
+                raise KeyError(f'config.ini [{section}] is missing the required key "{key}"')
+            # Required keys: temperature is a float, the rest are integers.
+            return parser.getfloat(section, key) if key == 'temperature' else parser.getint(section, key)
+        if isinstance(default, bool):
+            return parser.getboolean(section, key, fallback=default)
+        if isinstance(default, int):
+            return parser.getint(section, key, fallback=default)
+        if isinstance(default, float):
+            return parser.getfloat(section, key, fallback=default)
+        return parser.get(section, key, fallback=default).strip()
 
 
 def log(*values: object):
+    """Prints to the console and appends to bach21.log."""
     print(*values, file=stdout, flush=True)
-    with open('bach21.log', 'at') as file:
+    with open(LOG_PATH, 'at', encoding='utf-8') as file:
         print(*values, file=file, flush=True)
+
+
+def seed_everything(seed: int):
+    """Seeds Python, NumPy and PyTorch so data order, initial weights and sampling are reproducible."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
