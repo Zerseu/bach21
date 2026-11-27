@@ -21,7 +21,9 @@ class Config:
                               lora_targets=parser.get(sections[s], 'lora_targets', fallback='ih,hh,out,emb'),
                               add_causal_attn=parser.getboolean(sections[s], 'add_causal_attn', fallback=True),
                               attn_heads=parser.getint(sections[s], 'attn_heads', fallback=4),
-                              lora_peft_only=parser.getboolean(sections[s], 'lora_peft_only', fallback=True))
+                              lora_peft_only=parser.getboolean(sections[s], 'lora_peft_only', fallback=True),
+                              window_stride=parser.getint(sections[s], 'window_stride', fallback=0),
+                              early_stopping_patience=parser.getint(sections[s], 'early_stopping_patience', fallback=0))
             self.config[sections[s]] = dictionary
 
     def __str__(self):
