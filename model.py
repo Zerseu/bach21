@@ -11,7 +11,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from config import Config
+from config import Config, log
 from data import get_dir, generate_input, generate_output
 
 cfg = Config()
@@ -28,12 +28,13 @@ IGNORE_INDEX = -100
 
 class TorchModule(Module):
     def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int,
-                 lora_enable: bool = True, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
+                 lora_enable: bool = False, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
                  lora_targets: str = "ih,hh,out,emb", add_causal_attn: bool = True, attn_heads: int = 4):
         super(TorchModule, self).__init__()
         self.vocabulary_size = vocabulary_size
         self.map_direct = map_direct
         self.map_reverse = map_reverse
+        self.hidden_size = hidden_size
 
         self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
         self.dropout = torch.nn.Dropout(p=0.25)
@@ -43,26 +44,29 @@ class TorchModule(Module):
         self.emb_post = None
         self.post_attn = None
 
-        if lora_enable:
-            try:
-                from lora import inject_lora_into_lstm, inject_lora_into_linear
-                targets = tuple(x.strip() for x in lora_targets.split(',') if x.strip())
-                if "emb" in targets:
-                    self.emb_post = torch.nn.Linear(hidden_size, hidden_size, bias=False)
-                    torch.nn.init.eye_(self.emb_post.weight)
-                    inject_lora_into_linear(self.emb_post, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
-                if ("ih" in targets) or ("hh" in targets):
-                    inject_lora_into_lstm(self.lstm, r=lora_r, alpha=lora_alpha, dropout=lora_dropout,
-                                          targets=tuple(x for x in ("ih", "hh") if x in targets))
-                if "out" in targets:
-                    inject_lora_into_linear(self.linear, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
-            except Exception as e:
-                from config import log
-                log(f"[WARN] LoRA injection failed: {e}. Continuing without LoRA.")
-
         if add_causal_attn:
             self.post_attn = CausalSelfAttention(hidden_size, n_heads=attn_heads)
 
+        if lora_enable:
+            self.apply_lora(lora_r, lora_alpha, lora_dropout, lora_targets)
+
+        self.to(device)
+
+    def apply_lora(self, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
+                   lora_targets: str = "ih,hh,out,emb"):
+        # Wraps the current weights with LoRA adapters. Call it after loading a trained base model
+        # when fine-tuning, since the wrapped base weights are frozen.
+        from lora import inject_lora_into_lstm, inject_lora_into_linear
+        targets = tuple(x.strip() for x in lora_targets.split(',') if x.strip())
+        if "emb" in targets:
+            self.emb_post = torch.nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+            torch.nn.init.eye_(self.emb_post.weight)
+            inject_lora_into_linear(self.emb_post, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
+        if ("ih" in targets) or ("hh" in targets):
+            inject_lora_into_lstm(self.lstm, r=lora_r, alpha=lora_alpha, dropout=lora_dropout,
+                                  targets=tuple(x for x in ("ih", "hh") if x in targets))
+        if "out" in targets:
+            inject_lora_into_linear(self.linear, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
         self.to(device)
 
     def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
@@ -139,18 +143,22 @@ class Worker:
 
     def train(self):
         if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_model.torch')):
-            model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'],
-                                lora_enable=cfg.config[self.kind].get('lora_enable', True),
-                                lora_r=cfg.config[self.kind].get('lora_r', 8),
-                                lora_alpha=cfg.config[self.kind].get('lora_alpha', 16),
-                                lora_dropout=cfg.config[self.kind].get('lora_dropout', 0.05),
-                                lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
-                                add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
-                                attn_heads=cfg.config[self.kind].get('attn_heads', 4))
+            c = cfg.config[self.kind]
+            model = self.__new_model__(lora_enable=False)
+            if c['base_model']:
+                log(f"Loading base model {c['base_model']}...")
+                model.load_state_dict(torch.load(c['base_model'], map_location=device))
+            if c['lora_enable']:
+                if not c['base_model']:
+                    log('[WARN] LoRA is enabled without a base_model, so the frozen base weights stay random.')
+                model.apply_lora(c['lora_r'], c['lora_alpha'], c['lora_dropout'], c['lora_targets'])
+                if c['lora_peft_only']:
+                    from lora import mark_trainable_lora_only
+                    mark_trainable_lora_only(model)
+            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in model.parameters())
+            log(f'Trainable params: {trainable:,} / {total:,}')
             loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
-            from lora import mark_trainable_lora_only
-            if cfg.config[self.kind].get('lora_enable', True) and cfg.config[self.kind].get('lora_peft_only', True):
-                mark_trainable_lora_only(model)
             optimizer = Adam([p for p in model.parameters() if p.requires_grad])
             train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
             valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
@@ -171,15 +179,9 @@ class Worker:
 
     def test(self):
         if self.model is None:
-            self.model = TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, cfg.config[self.kind]['hidden_size'],
-                                     lora_enable=cfg.config[self.kind].get('lora_enable', True),
-                                     lora_r=cfg.config[self.kind].get('lora_r', 8),
-                                     lora_alpha=cfg.config[self.kind].get('lora_alpha', 16),
-                                     lora_dropout=cfg.config[self.kind].get('lora_dropout', 0.05),
-                                     lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
-                                     add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
-                                     attn_heads=cfg.config[self.kind].get('attn_heads', 4)).cpu()
-            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch'), map_location='cpu'))
+            self.model = self.__new_model__(lora_enable=cfg.config[self.kind]['lora_enable'])
+            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch'), map_location=device))
+            self.model = self.model.cpu()
         self.model.eval()
 
         number_of_steps = 0
@@ -200,6 +202,17 @@ class Worker:
         sentence = ' '.join(sentence)
         with open(os.path.join(self.crt_dir, self.kind + '_output.txt'), 'wt') as file:
             file.write(sentence)
+
+    def __new_model__(self, lora_enable: bool) -> TorchModule:
+        c = cfg.config[self.kind]
+        return TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, c['hidden_size'],
+                           lora_enable=lora_enable,
+                           lora_r=c['lora_r'],
+                           lora_alpha=c['lora_alpha'],
+                           lora_dropout=c['lora_dropout'],
+                           lora_targets=c['lora_targets'],
+                           add_causal_attn=c['add_causal_attn'],
+                           attn_heads=c['attn_heads'])
 
     @staticmethod
     def __read_sentences__(pth: str) -> [[str]]:
