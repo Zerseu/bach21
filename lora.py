@@ -1,11 +1,20 @@
+"""Low-rank adapters (LoRA) for fine-tuning a trained model.
+
+Each wrapped weight W is used as W + (alpha / r) * B @ A, with small trainable matrices A and B and W
+frozen. B starts at zero, so a freshly wrapped model behaves exactly like the base model.
+"""
 from typing import Tuple
 
 import torch
 from torch import nn
 from torch.nn.utils import parametrize
 
+from config import log
+
 
 class LoRAParam(nn.Module):
+    """Parametrization that adds a rank-r update to a weight matrix."""
+
     def __init__(self, weight: torch.Tensor, r: int, alpha: float = 1.0, dropout: float = 0.0):
         super().__init__()
         out_features, in_features = weight.shape
@@ -24,30 +33,23 @@ class LoRAParam(nn.Module):
         return W + self.scaling * (self.B @ self.A)
 
 
-def inject_lora_into_lstm(lstm: nn.LSTM, r: int, alpha: float, dropout: float, targets: Tuple[str, ...] = ("ih", "hh")) -> None:
-    L = lstm.num_layers
-    for l in range(L):
-        if "ih" in targets:
-            base = getattr(lstm, f"weight_ih_l{l}")
-            parametrize.register_parametrization(module=lstm,
-                                                 tensor_name=f"weight_ih_l{l}",
-                                                 parametrization=LoRAParam(base.data,
-                                                                           r=r,
-                                                                           alpha=alpha,
-                                                                           dropout=dropout), )
-            base.requires_grad = False
-        if "hh" in targets:
-            base = getattr(lstm, f"weight_hh_l{l}")
-            parametrize.register_parametrization(module=lstm,
-                                                 tensor_name=f"weight_hh_l{l}",
-                                                 parametrization=LoRAParam(base.data,
-                                                                           r=r,
-                                                                           alpha=alpha,
-                                                                           dropout=dropout), )
+def inject_lora_into_lstm(lstm: nn.LSTM, r: int, alpha: float, dropout: float,
+                          targets: Tuple[str, ...] = ("ih", "hh")) -> None:
+    """Adds adapters to the input ("ih") and/or recurrent ("hh") weights of every LSTM layer."""
+    for layer in range(lstm.num_layers):
+        for kind in ("ih", "hh"):
+            if kind not in targets:
+                continue
+            name = f"weight_{kind}_l{layer}"
+            base = getattr(lstm, name)
+            parametrize.register_parametrization(module=lstm, tensor_name=name,
+                                                 parametrization=LoRAParam(base.data, r=r, alpha=alpha,
+                                                                           dropout=dropout))
             base.requires_grad = False
 
 
 def inject_lora_into_linear(linear: nn.Linear, r: int, alpha: float, dropout: float) -> None:
+    """Adds an adapter to the weight of a Linear layer."""
     base = linear.weight
     parametrize.register_parametrization(module=linear,
                                          tensor_name="weight",
@@ -59,6 +61,7 @@ def inject_lora_into_linear(linear: nn.Linear, r: int, alpha: float, dropout: fl
 
 
 def merge_all_lora(module: nn.Module) -> None:
+    """Folds every adapter into its weight and removes the parametrizations (for export)."""
     for m in module.modules():
         try:
             parametrize.remove_parametrizations(m, "weight", leave_parametrized=True)
@@ -76,6 +79,7 @@ def merge_all_lora(module: nn.Module) -> None:
 
 
 def mark_trainable_lora_only(model: nn.Module, train_bias: bool = True, train_layernorm: bool = True):
+    """Freezes everything except the LoRA matrices and, optionally, biases and LayerNorm weights."""
     total, trainable = 0, 0
     for n, p in model.named_parameters():
         total += p.numel()
@@ -92,4 +96,4 @@ def mark_trainable_lora_only(model: nn.Module, train_bias: bool = True, train_la
         p.requires_grad = ok
         if ok:
             trainable += p.numel()
-    print(f"Trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
+    log(f"Trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")

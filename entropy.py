@@ -1,26 +1,44 @@
+"""Entropy analysis of a composer's pitch sequences (the measurements behind the ESANN paper).
+
+    python entropy.py bach violin
+
+For every part longer than 256 notes it measures the transition entropy of the pitch sequence (the
+average entropy of "which pitch comes next" per pitch) and compares it with random sequences over the
+same alphabet. It saves two plots to bach21data/<composer>/<instrument>/ and prints the expected entropy
+of a 1000-note piece next to the noise entropy at that length.
+
+If that folder also has a results.csv (one row per motif threshold and sampling temperature, with 10
+entropies measured without motifs and 10 with), it also plots entropy against temperature for each
+threshold. Nothing in this repository writes results.csv; it comes from the paper's experiment runs.
+"""
 import os
 import random
 import sys
 
 import matplotlib
-import matplotlib.pyplot as plt
+
+matplotlib.use('Agg')  # write image files only; no window, works without a display
+
+import matplotlib.pyplot as plt  # noqa: E402 (the backend must be chosen first)
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 from tqdm import tqdm
 
 from config import log
-from data import get_dir, generate_input
+from data import REST_TOKEN, generate_input, get_dir
 
-matplotlib.use('TkAgg')
+NOISE_TRIALS = 10
 
 
-def helper_entropy(probabilities: pd.DataFrame) -> float:
+def helper_entropy(probabilities: pd.Series) -> float:
+    """Shannon entropy in bits of one row of transition probabilities."""
     probabilities = probabilities[probabilities > 0]
     return -np.sum(probabilities * np.log2(probabilities))
 
 
-def reference_entropy(alphabet_size: int, sequence_length: int, trials=10) -> float:
+def reference_entropy(alphabet_size: int, sequence_length: int, trials: int = NOISE_TRIALS) -> float:
+    """Average transition entropy of uniformly random sequences of the given length and alphabet size."""
     alphabet = [str(word) for word in range(alphabet_size)]
     trial_list = np.zeros(trials, dtype=float)
     for trial in range(trials):
@@ -28,7 +46,8 @@ def reference_entropy(alphabet_size: int, sequence_length: int, trials=10) -> fl
     return np.mean(trial_list)
 
 
-def sequence_entropy(sequence: [str]) -> float:
+def sequence_entropy(sequence: list[str]) -> float:
+    """Mean over states of the entropy of the next-symbol distribution."""
     df = pd.DataFrame({'current': sequence[:-1], 'next': sequence[1:]})
     transition_matrix = pd.crosstab(df['current'], df['next'], normalize='index')
     state_entropies = transition_matrix.apply(helper_entropy, axis=1)
@@ -36,20 +55,8 @@ def sequence_entropy(sequence: [str]) -> float:
     return overall_entropy
 
 
-def interp_lagrange(x_points: [float], y_points: [float], x: float) -> float:
-    assert len(x_points) == len(y_points)
-    n = min(len(x_points), len(y_points))
-    y = 0
-    for i in range(n):
-        term = y_points[i]
-        for j in range(n):
-            if i != j:
-                term *= (x - x_points[j]) / (x_points[i] - x_points[j])
-        y += term
-    return y
-
-
-def composer_entropy(composer: str, instruments: [str]) -> (float, float):
+def composer_entropy(composer: str, instruments: list[str]) -> tuple[float, float]:
+    """Plots the per-part entropies and returns (expected entropy at 1000 notes, noise entropy at 1000)."""
     log('Computing', composer.upper(), 'entropy plot...')
     crt_dir = get_dir(composer, instruments)
     generate_input(composer, instruments)
@@ -59,12 +66,9 @@ def composer_entropy(composer: str, instruments: [str]) -> (float, float):
         for sentence in file.read().strip('\n').split('\n'):
             pitches.append([])
             for word in sentence.split():
-                if word == 'RST':
-                    continue
-                else:
+                if word != REST_TOKEN:
                     pitches[-1].append(word)
-                    if word not in vocabulary:
-                        vocabulary.add(word)
+                    vocabulary.add(word)
 
     seq_len_int = []
     seq_len_str = []
@@ -115,11 +119,8 @@ def composer_entropy(composer: str, instruments: [str]) -> (float, float):
     return interp(1000), reference_entropy(len(vocabulary), 1000)
 
 
-def main():
-    print(composer_entropy(sys.argv[1], sys.argv[2:]))
-    crt_dir = get_dir(sys.argv[1], sys.argv[2:])
-    no_trials = 10
-    thresholds = [0.10, 0.25]
+def plot_motif_results(composer: str, crt_dir: str, thresholds: tuple[float, ...] = (0.10, 0.25)):
+    """Entropy against sampling temperature, with and without motifs, from results.csv."""
     for threshold in thresholds:
         with open(os.path.join(crt_dir, 'results.csv'), 'rt') as report:
             report.readline()
@@ -155,11 +156,24 @@ def main():
             plt.plot(xs, ys_w, linestyle='-', linewidth=ln_width, color='green', label='With Motifs')
             plt.plot(xs, ys_ref, linestyle='--', linewidth=ln_width, color='orange', label='Expected Entropy')
             plt.xlabel('Sampling Temperature')
-            plt.ylabel(f'Avg. Entropy ({no_trials} Trials)')
-            plt.title(sys.argv[1].capitalize())
+            plt.ylabel(f'Avg. Entropy ({NOISE_TRIALS} Trials)')
+            plt.title(composer.capitalize())
             plt.legend()
             plt.savefig(pth_plot, dpi=dpi, bbox_inches='tight')
             plt.close('all')
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit('Usage: python entropy.py COMPOSER [INSTRUMENT ...]')
+    composer, instruments = sys.argv[1], sys.argv[2:]
+    expected, noise = composer_entropy(composer, instruments)
+    log(f'Expected entropy at 1000 notes: {float(expected):.4f} bits, noise entropy: {noise:.4f} bits')
+    crt_dir = get_dir(composer, instruments)
+    if os.path.exists(os.path.join(crt_dir, 'results.csv')):
+        plot_motif_results(composer, crt_dir)
+    else:
+        log(f'No results.csv in {crt_dir}, skipping the motif plots.')
 
 
 if __name__ == "__main__":
