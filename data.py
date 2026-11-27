@@ -12,7 +12,44 @@ from config import log
 DataRoot: str = 'bach21data'
 FilterParts: bool = False
 FilterRests: bool = True
+DurationGrid: float = 0.125
+MaxRestLength: float = 4.0
+TokenSeparator: str = '_'
+RestToken: str = 'RST'
 random.seed(0)
+
+
+def quantize_duration(in_duration: float) -> float:
+    steps = max(1, round(float(in_duration) / DurationGrid))
+    return steps * DurationGrid
+
+
+def make_note_token(pitch: str, duration: float) -> str:
+    return f'{pitch}{TokenSeparator}{duration:g}'
+
+
+def split_note_token(token: str) -> (str, float):
+    pitch, duration = token.rsplit(TokenSeparator, 1)
+    return pitch, float(duration)
+
+
+def part_to_note_tokens(pitches: [float], durations: [float]) -> [str]:
+    # Combined pitch+duration tokens. Rests are kept, but consecutive rests are merged,
+    # capped at MaxRestLength, and stripped from the start and end of the part.
+    tokens = []
+    rest = 0.0
+    for e_pitch, e_duration in zip(pitches, durations):
+        if e_duration <= 0:
+            continue
+        if e_pitch == 0:
+            rest += e_duration
+            continue
+        if rest > 0 and len(tokens) > 0:
+            tokens.append(make_note_token(RestToken, quantize_duration(min(rest, MaxRestLength))))
+        rest = 0.0
+        name = str(music21.note.Note(e_pitch).nameWithOctave)
+        tokens.append(make_note_token(name, quantize_duration(e_duration)))
+    return tokens
 
 
 def note_to_freq(in_note: str) -> float:
@@ -74,7 +111,8 @@ def generate_input(composer: str, instruments: [str]):
     crt_dir = get_dir(composer, instruments)
     pth_pitches = os.path.join(crt_dir, 'pitch_input.txt')
     pth_durations = os.path.join(crt_dir, 'duration_input.txt')
-    if os.path.exists(pth_pitches) and os.path.exists(pth_durations):
+    pth_notes = os.path.join(crt_dir, 'note_input.txt')
+    if os.path.exists(pth_pitches) and os.path.exists(pth_durations) and os.path.exists(pth_notes):
         return
 
     log('Generating input data...')
@@ -156,26 +194,45 @@ def generate_input(composer: str, instruments: [str]):
                 file_pitches.write(' '.join(str_pitches) + '\n')
                 file_durations.write(' '.join(str_durations) + '\n')
                 total_units += len(str_pitches)
+    total_notes = 0
+    with open(pth_notes, 'wt') as file_notes:
+        for pitches, durations in zip(num_pitches, num_durations):
+            tokens = part_to_note_tokens(pitches, durations)
+            if len(tokens) > 0:
+                file_notes.write(' '.join(tokens) + '\n')
+                total_notes += len(tokens)
     log('Done generating input data...')
     log(composer.upper(), 'data has', total_units, 'units...')
+    log(composer.upper(), 'data has', total_notes, 'note tokens...')
 
 
 def generate_output(composer: str, instruments: [str]):
     crt_dir = get_dir(composer, instruments)
 
+    pth_note = os.path.join(crt_dir, 'note_output.txt')
     pth_pitch = os.path.join(crt_dir, 'pitch_output.txt')
     pth_duration = os.path.join(crt_dir, 'duration_output.txt')
     pth_midi = os.path.join(crt_dir, 'midi_output.mid')
     pth_xml = os.path.join(crt_dir, 'xml_output.musicxml')
 
     log('Generating output data...')
-    with open(pth_pitch, 'rt') as file:
-        pitches = file.read().split(' ')
-    if os.path.exists(pth_duration):
-        with open(pth_duration, 'rt') as file:
-            durations = file.read().split(' ')
+    if os.path.exists(pth_note):
+        with open(pth_note, 'rt') as file:
+            tokens = [split_note_token(token) for token in file.read().split()]
+        pitches = [pitch for pitch, _ in tokens]
+        durations = [duration for _, duration in tokens]
+        with open(pth_pitch, 'wt') as file:
+            file.write(' '.join(pitches))
+        with open(pth_duration, 'wt') as file:
+            file.write(' '.join(f'{duration:g}' for duration in durations))
     else:
-        durations = ['0.25' for _ in pitches]
+        with open(pth_pitch, 'rt') as file:
+            pitches = file.read().split()
+        if os.path.exists(pth_duration):
+            with open(pth_duration, 'rt') as file:
+                durations = [float(duration) for duration in file.read().split()]
+        else:
+            durations = [0.25 for _ in pitches]
     assert len(pitches) == len(durations)
     length = len(pitches)
 
@@ -183,12 +240,11 @@ def generate_output(composer: str, instruments: [str]):
     composition.append(clef.TrebleClef())
     composition.append(instrument.Violin())
     for i in range(length):
-        dur = sorted((0.5, float(durations[i]), 2.0))[1]
-        if pitches[i] == 'RST':
-            element = note.Rest(dur)
+        dur = quantize_duration(durations[i])
+        if pitches[i] == RestToken:
+            element = note.Rest(quarterLength=dur)
         else:
-            element = note.Note(pitches[i])
-            element.duration.quarterLength = dur
+            element = note.Note(pitches[i], quarterLength=dur)
         composition.append(element)
     composition.makeMeasures(inPlace=True)
     composition.write('midi', pth_midi)
