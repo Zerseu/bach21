@@ -24,7 +24,19 @@ class Config:
                               lora_peft_only=parser.getboolean(sections[s], 'lora_peft_only', fallback=False),
                               base_model=parser.get(sections[s], 'base_model', fallback=''),
                               window_stride=parser.getint(sections[s], 'window_stride', fallback=0),
-                              early_stopping_patience=parser.getint(sections[s], 'early_stopping_patience', fallback=0))
+                              early_stopping_patience=parser.getint(sections[s], 'early_stopping_patience', fallback=0),
+                              transpose=parser.getint(sections[s], 'transpose', fallback=0),
+                              tie_weights=parser.getboolean(sections[s], 'tie_weights', fallback=False),
+                              dropout=parser.getfloat(sections[s], 'dropout', fallback=0.25),
+                              output_dropout=parser.getfloat(sections[s], 'output_dropout', fallback=0.0),
+                              learning_rate=parser.getfloat(sections[s], 'learning_rate', fallback=1e-3),
+                              weight_decay=parser.getfloat(sections[s], 'weight_decay', fallback=0.0),
+                              grad_clip=parser.getfloat(sections[s], 'grad_clip', fallback=0.0),
+                              top_p=parser.getfloat(sections[s], 'top_p', fallback=1.0),
+                              extra_training_data=parser.getboolean(sections[s], 'extra_training_data', fallback=False),
+                              transpose_extra=parser.getint(sections[s], 'transpose_extra', fallback=0),
+                              lr_decay=parser.getfloat(sections[s], 'lr_decay', fallback=0.0),
+                              motif_threshold=parser.getfloat(sections[s], 'motif_threshold', fallback=0.10))
             self.config[sections[s]] = dictionary
 
     def __str__(self):
