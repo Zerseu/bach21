@@ -23,6 +23,7 @@ random.seed(seed)
 torch.manual_seed(seed)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 predictions = 1024
+IGNORE_INDEX = -100
 
 
 class TorchModule(Module):
@@ -72,7 +73,7 @@ class TorchModule(Module):
         x, _ = self.lstm(x)
         if self.post_attn is not None:
             x = self.post_attn(x)
-        x = x[:, -1, :]
+        # Logits for every timestep: (batch, time, vocabulary). Position t predicts token t + 1.
         x = self.linear(x)
         return x
 
@@ -127,10 +128,12 @@ class Worker:
         with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'rt') as file:
             self.motifs = json.load(file)
 
-        x, y = Worker.__generate_xy__(self.data, cfg.config[kind]['number_of_steps'])
-        split = int(min(len(x), len(y)) * 0.8)
-        self.d_trn = TorchDataset(x[:split], y[:split])
-        self.d_val = TorchDataset(x[split:], y[split:])
+        # Split by whole parts, not by windows, so overlapping windows never leak across the split.
+        data_trn, data_val = Worker.__split_data__(self.data, 0.8)
+        number_of_steps = cfg.config[kind]['number_of_steps']
+        window_stride = cfg.config[kind]['window_stride'] or max(1, number_of_steps // 4)
+        self.d_trn = TorchDataset(*Worker.__generate_xy__(data_trn, number_of_steps, window_stride))
+        self.d_val = TorchDataset(*Worker.__generate_xy__(data_val, number_of_steps, window_stride))
 
         self.model = None
 
@@ -144,7 +147,7 @@ class Worker:
                                 lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
                                 add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
                                 attn_heads=cfg.config[self.kind].get('attn_heads', 4))
-            loss_function = CrossEntropyLoss()
+            loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
             from lora import mark_trainable_lora_only
             if cfg.config[self.kind].get('lora_enable', True) and cfg.config[self.kind].get('lora_peft_only', True):
                 mark_trainable_lora_only(model)
@@ -152,6 +155,7 @@ class Worker:
             train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
             valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
             csv_logger = os.path.join(self.crt_dir, self.kind + '_log.csv')
+            pth_best = os.path.join(self.crt_dir, self.kind + '_model_best.torch')
 
             Worker.__train_model__(model,
                                    train_loader,
@@ -159,8 +163,11 @@ class Worker:
                                    loss_function,
                                    optimizer,
                                    csv_logger,
-                                   cfg.config[self.kind]['number_of_epochs'])
-            torch.save(model.state_dict(), os.path.join(self.crt_dir, self.kind + '_model.torch'))
+                                   pth_best,
+                                   cfg.config[self.kind]['number_of_epochs'],
+                                   cfg.config[self.kind]['early_stopping_patience'])
+            # Only publish the final model once training has finished, so an interrupted run is retrained.
+            os.replace(pth_best, os.path.join(self.crt_dir, self.kind + '_model.torch'))
 
     def test(self):
         if self.model is None:
@@ -232,15 +239,37 @@ class Worker:
         return data, vocabulary_size, map_direct, map_reverse
 
     @staticmethod
-    def __generate_xy__(data: [[int]], number_of_steps: int) -> (np.ndarray, np.ndarray):
+    def __split_data__(data: [[int]], ratio: float) -> ([[int]], [[int]]):
+        total = sum(len(sentence) for sentence in data)
+        running = 0
+        for idx, sentence in enumerate(data):
+            if running >= total * ratio:
+                return data[:idx], data[idx:]
+            running += len(sentence)
+        return data[:-1], data[-1:]
+
+    @staticmethod
+    def __generate_xy__(data: [[int]], number_of_steps: int, window_stride: int) -> (np.ndarray, np.ndarray):
+        # Each sample is a window of number_of_steps tokens; its target is the same window shifted by one,
+        # so the loss is computed at every timestep instead of only the last one.
+        # Parts shorter than a window are right-padded: inputs with token 0, targets with IGNORE_INDEX.
+        # The model is causal, so padding at the end never influences the real positions.
         x = []
         y = []
-        for crt_idx_sentence in range(len(data)):
-            for crt_idx_word in range(len(data[crt_idx_sentence]) - number_of_steps):
-                x.append(data[crt_idx_sentence][crt_idx_word:crt_idx_word + number_of_steps])
-                y.append(data[crt_idx_sentence][crt_idx_word + number_of_steps])
-        x = np.array(x, dtype=int)
-        y = np.array(y, dtype=int)
+        for sentence in data:
+            if len(sentence) < 2:
+                continue
+            last_start = max(0, len(sentence) - 1 - number_of_steps)
+            starts = list(range(0, last_start + 1, window_stride))
+            if starts[-1] != last_start:
+                starts.append(last_start)
+            for start in starts:
+                window = sentence[start:start + number_of_steps + 1]
+                pad = number_of_steps + 1 - len(window)
+                x.append(window[:-1] + [0] * pad)
+                y.append(window[1:] + [IGNORE_INDEX] * pad)
+        x = np.array(x, dtype=int).reshape((-1, number_of_steps))
+        y = np.array(y, dtype=int).reshape((-1, number_of_steps))
         assert len(x) == len(y)
         return x, y
 
@@ -251,31 +280,51 @@ class Worker:
                         loss_function: CrossEntropyLoss,
                         optimizer: Adam,
                         csv_logger: str,
-                        num_epochs: int = 10):
+                        pth_best: str,
+                        num_epochs: int = 10,
+                        patience: int = 0):
+        best_valid_loss = float('inf')
+        epochs_without_improvement = 0
         with open(csv_logger, 'wt') as file:
-            file.write('epoch,train_loss,validation_loss\n')
+            file.write('epoch,train_loss,validation_loss,best\n')
             for epoch in tqdm(range(num_epochs)):
                 model.train()
-                total_train_loss = 0
+                total_train_loss = 0.0
+                total_train_tokens = 0
                 for inputs, labels in train_loader:
                     optimizer.zero_grad()
                     outputs = model(inputs)
-                    loss = loss_function(outputs, labels)
-                    loss.backward()
+                    tokens = int((labels != IGNORE_INDEX).sum())
+                    loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
+                    (loss / max(tokens, 1)).backward()
                     optimizer.step()
                     total_train_loss += loss.item()
+                    total_train_tokens += tokens
 
                 model.eval()
-                total_valid_loss = 0
+                total_valid_loss = 0.0
+                total_valid_tokens = 0
                 with torch.no_grad():
                     for inputs, labels in valid_loader:
                         outputs = model(inputs)
-                        loss = loss_function(outputs, labels)
+                        loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
                         total_valid_loss += loss.item()
+                        total_valid_tokens += int((labels != IGNORE_INDEX).sum())
 
-                avg_train_loss = total_train_loss / len(train_loader)
-                avg_valid_loss = total_valid_loss / len(valid_loader)
-                file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f}\n')
+                # Per-token averages, so padded positions and uneven batches do not skew the numbers.
+                avg_train_loss = total_train_loss / max(total_train_tokens, 1)
+                avg_valid_loss = total_valid_loss / max(total_valid_tokens, 1)
+                improved = avg_valid_loss < best_valid_loss
+                if improved:
+                    best_valid_loss = avg_valid_loss
+                    epochs_without_improvement = 0
+                    torch.save(model.state_dict(), pth_best)
+                else:
+                    epochs_without_improvement += 1
+                file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f},{int(improved)}\n')
+                file.flush()
+                if 0 < patience <= epochs_without_improvement:
+                    break
 
     @staticmethod
     def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> (float, int):
@@ -287,7 +336,8 @@ class Worker:
 
     @staticmethod
     def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
-        pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())
+        with torch.no_grad():
+            pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())[:, -1, :]
         return Worker.__temp_sample__(pred, temp)
 
     @staticmethod
