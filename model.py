@@ -1,12 +1,10 @@
 import collections
 import json
-import multiprocessing
 import os
 import random
 import sys
 
 import numpy as np
-import regex as re
 import torch
 from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
@@ -123,7 +121,7 @@ class Worker:
         self.data, self.vocabulary_size, self.map_direct, self.map_reverse = Worker.__load_data__(self.composer, self.instruments, self.kind)
 
         if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_motifs.json')):
-            self.motifs = Worker.__motif_query_all__(self.map_direct, self.map_reverse, os.path.join(self.crt_dir, self.kind + '_input.txt'), self.kind == 'pitch')
+            self.motifs = Worker.__motif_query_all__(self.map_direct, self.map_reverse, os.path.join(self.crt_dir, self.kind + '_input.txt'), self.kind in ('pitch', 'note'))
             with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'wt') as file:
                 json.dump(self.motifs, file, indent=4)
         with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'rt') as file:
@@ -148,7 +146,7 @@ class Worker:
                                 attn_heads=cfg.config[self.kind].get('attn_heads', 4))
             loss_function = CrossEntropyLoss()
             from lora import mark_trainable_lora_only
-            if cfg.config[self.kind].get('lora_peft_only', True):
+            if cfg.config[self.kind].get('lora_enable', True) and cfg.config[self.kind].get('lora_peft_only', True):
                 mark_trainable_lora_only(model)
             optimizer = Adam([p for p in model.parameters() if p.requires_grad])
             train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
@@ -174,7 +172,8 @@ class Worker:
                                      lora_targets=cfg.config[self.kind].get('lora_targets', 'ih,hh,out,emb'),
                                      add_causal_attn=cfg.config[self.kind].get('add_causal_attn', True),
                                      attn_heads=cfg.config[self.kind].get('attn_heads', 4)).cpu()
-            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch')))
+            self.model.load_state_dict(torch.load(os.path.join(self.crt_dir, self.kind + '_model.torch'), map_location='cpu'))
+        self.model.eval()
 
         number_of_steps = 0
         for key in cfg.config:
@@ -185,11 +184,12 @@ class Worker:
             inception = content[idx:idx + number_of_steps]
         sentence_ids = [self.map_direct[element] for element in inception]
         sentence = inception
-        for _ in range(predictions - number_of_steps):
-            i = sentence_ids[-number_of_steps:]
-            p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'])
-            sentence_ids.append(o)
-            sentence.append(self.map_reverse[o])
+        with torch.no_grad():
+            for _ in range(predictions - number_of_steps):
+                i = sentence_ids[-number_of_steps:]
+                p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'])
+                sentence_ids.append(o)
+                sentence.append(self.map_reverse[o])
         sentence = ' '.join(sentence)
         with open(os.path.join(self.crt_dir, self.kind + '_output.txt'), 'wt') as file:
             file.write(sentence)
@@ -320,28 +320,14 @@ class Worker:
             for sentence in file.read().strip('\n').split('\n'):
                 for word in sentence.split():
                     elems_int.append(map_direct[word])
-        elems_str = ' '.join(map_reverse[word] for word in elems_int)
-
+        counts = collections.Counter(tuple(elems_int[motif_start:motif_start + motif_length])
+                                     for motif_start in range(len(elems_int) - motif_length))
         motifs: dict[str, int] = {}
-        visited: set[str] = set()
-
-        for motif_start in range(len(elems_int) - motif_length):
-            motif_int: [int] = elems_int[motif_start:motif_start + motif_length]
-            if motif_filter and not Worker.__motif_query_filter__(motif_int):
+        for motif_int, motif_occ in counts.items():
+            if motif_filter and not Worker.__motif_query_filter__(list(motif_int)):
                 continue
-            motif_str: str = ' '.join([map_reverse[word] for word in motif_int])
-            if motif_str in visited:
-                continue
-            visited.add(motif_str)
-
-            if motif_str not in motifs:
-                motif_occ = len(re.findall(pattern=re.escape(pattern=motif_str,
-                                                             special_only=False,
-                                                             literal_spaces=False),
-                                           string=elems_str,
-                                           overlapped=True))
-                if motif_occ > 1:
-                    motifs[motif_str] = motif_occ
+            if motif_occ > 1:
+                motifs[' '.join(map_reverse[word] for word in motif_int)] = motif_occ
 
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
@@ -354,21 +340,19 @@ class Worker:
         length_upper_bound = 8
         motifs = {}
 
-        with multiprocessing.Pool(multiprocessing.cpu_count() - 2) as pool:
-            args = [(map_direct, map_reverse, pth, motif_length, motif_filter) for motif_length in range(length_lower_bound, length_upper_bound + 1)]
-            for result in pool.starmap(Worker.__motif_query_any__, args):
-                motifs.update(result)
+        for motif_length in range(length_lower_bound, length_upper_bound + 1):
+            motifs.update(Worker.__motif_query_any__(map_direct, map_reverse, pth, motif_length, motif_filter))
 
         return dict(sorted(motifs.items(), key=lambda item: item[1], reverse=True))
 
 
 def main_train(composer: str, instruments: [str]):
     generate_input(composer, instruments)
-    Worker(composer=composer, instruments=instruments, kind='pitch').train()
+    Worker(composer=composer, instruments=instruments, kind='note').train()
 
 
 def main_test(composer: str, instruments: [str]):
-    Worker(composer=composer, instruments=instruments, kind='pitch').test()
+    Worker(composer=composer, instruments=instruments, kind='note').test()
     generate_output(composer, instruments)
 
 
