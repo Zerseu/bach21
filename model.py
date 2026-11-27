@@ -4,19 +4,18 @@ import os
 import random
 import sys
 
+import music21
 import numpy as np
 import torch
 from torch.nn import Module, CrossEntropyLoss
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from config import Config, log
-from data import get_dir, generate_input, generate_output
+from data import get_dir, generate_input, generate_output, RestToken, TokenSeparator
 
 cfg = Config()
-motif_augmentation = True
-motif_threshold = 0.10
 
 seed = 0
 random.seed(seed)
@@ -29,7 +28,8 @@ IGNORE_INDEX = -100
 class TorchModule(Module):
     def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int,
                  lora_enable: bool = False, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05,
-                 lora_targets: str = "ih,hh,out,emb", add_causal_attn: bool = True, attn_heads: int = 4):
+                 lora_targets: str = "ih,hh,out,emb", add_causal_attn: bool = True, attn_heads: int = 4,
+                 dropout: float = 0.25, output_dropout: float = 0.0, tie_weights: bool = False):
         super(TorchModule, self).__init__()
         self.vocabulary_size = vocabulary_size
         self.map_direct = map_direct
@@ -37,9 +37,14 @@ class TorchModule(Module):
         self.hidden_size = hidden_size
 
         self.embedding = torch.nn.Embedding(num_embeddings=vocabulary_size, embedding_dim=hidden_size)
-        self.dropout = torch.nn.Dropout(p=0.25)
+        self.dropout = torch.nn.Dropout(p=dropout)
         self.lstm = torch.nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
+        self.output_dropout = torch.nn.Dropout(p=output_dropout)
         self.linear = torch.nn.Linear(in_features=hidden_size, out_features=vocabulary_size)
+        if tie_weights:
+            # Input and output embeddings share one matrix: fewer weights, and rare tokens learn from both ends.
+            torch.nn.init.uniform_(self.embedding.weight, -0.1, 0.1)
+            self.linear.weight = self.embedding.weight
 
         self.emb_post = None
         self.post_attn = None
@@ -77,6 +82,7 @@ class TorchModule(Module):
         x, _ = self.lstm(x)
         if self.post_attn is not None:
             x = self.post_attn(x)
+        x = self.output_dropout(x)
         # Logits for every timestep: (batch, time, vocabulary). Position t predicts token t + 1.
         x = self.linear(x)
         return x
@@ -123,7 +129,26 @@ class Worker:
 
         self.crt_dir = get_dir(self.composer, self.instruments)
 
-        self.data, self.vocabulary_size, self.map_direct, self.map_reverse = Worker.__load_data__(self.composer, self.instruments, self.kind)
+        # Split by whole parts, not by windows, so overlapping windows never leak across the split.
+        # Only the training parts are transposed, so validation stays real, untransposed music.
+        sentences = Worker.__read_sentences__(os.path.join(self.crt_dir, self.kind + '_input.txt'))
+        sentences_trn, sentences_val = Worker.__split_data__(sentences, 0.8)
+        transpose = cfg.config[kind]['transpose']
+        if transpose > 0 and kind in ('pitch', 'note'):
+            sentences_trn = Worker.__transpose_sentences__(sentences_trn, sentences, transpose, kind)
+            log(f'Transposition: {len(sentences_trn)} training parts (shifts up to +/-{transpose} semitones)')
+        if cfg.config[kind]['extra_training_data'] and len(instruments) > 0 and kind in ('pitch', 'note'):
+            extra = Worker.__extra_sentences__(composer, kind, sentences, sentences_trn + sentences_val)
+            log(f'Extra training data: {len(extra)} parts of other {composer} instruments, {sum(map(len, extra))} tokens')
+            if cfg.config[kind]['transpose_extra'] > 0:
+                extra = Worker.__transpose_sentences__(extra, sentences, cfg.config[kind]['transpose_extra'], kind)
+                log(f'Extra training data after transposition: {len(extra)} parts')
+            sentences_trn = sentences_trn + extra
+        self.map_direct = Worker.__build_vocabulary__(sentences_trn + sentences_val)
+        self.map_reverse = dict(zip(self.map_direct.values(), self.map_direct.keys()))
+        self.vocabulary_size = len(self.map_direct)
+        data_trn = [[self.map_direct[word] for word in sentence] for sentence in sentences_trn]
+        data_val = [[self.map_direct[word] for word in sentence] for sentence in sentences_val]
 
         if not os.path.exists(os.path.join(self.crt_dir, self.kind + '_motifs.json')):
             self.motifs = Worker.__motif_query_all__(self.map_direct, self.map_reverse, os.path.join(self.crt_dir, self.kind + '_input.txt'), self.kind in ('pitch', 'note'))
@@ -132,8 +157,6 @@ class Worker:
         with open(os.path.join(self.crt_dir, self.kind + '_motifs.json'), 'rt') as file:
             self.motifs = json.load(file)
 
-        # Split by whole parts, not by windows, so overlapping windows never leak across the split.
-        data_trn, data_val = Worker.__split_data__(self.data, 0.8)
         number_of_steps = cfg.config[kind]['number_of_steps']
         window_stride = cfg.config[kind]['window_stride'] or max(1, number_of_steps // 4)
         self.d_trn = TorchDataset(*Worker.__generate_xy__(data_trn, number_of_steps, window_stride))
@@ -159,7 +182,8 @@ class Worker:
             total = sum(p.numel() for p in model.parameters())
             log(f'Trainable params: {trainable:,} / {total:,}')
             loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
-            optimizer = Adam([p for p in model.parameters() if p.requires_grad])
+            optimizer = AdamW([p for p in model.parameters() if p.requires_grad],
+                              lr=c['learning_rate'], weight_decay=c['weight_decay'])
             train_loader = DataLoader(dataset=self.d_trn, batch_size=cfg.config[self.kind]['batch_size'], shuffle=True)
             valid_loader = DataLoader(dataset=self.d_val, batch_size=cfg.config[self.kind]['batch_size'])
             csv_logger = os.path.join(self.crt_dir, self.kind + '_log.csv')
@@ -173,7 +197,9 @@ class Worker:
                                    csv_logger,
                                    pth_best,
                                    cfg.config[self.kind]['number_of_epochs'],
-                                   cfg.config[self.kind]['early_stopping_patience'])
+                                   cfg.config[self.kind]['early_stopping_patience'],
+                                   c['grad_clip'],
+                                   c['lr_decay'])
             # Only publish the final model once training has finished, so an interrupted run is retrained.
             os.replace(pth_best, os.path.join(self.crt_dir, self.kind + '_model.torch'))
 
@@ -196,7 +222,8 @@ class Worker:
         with torch.no_grad():
             for _ in range(predictions - number_of_steps):
                 i = sentence_ids[-number_of_steps:]
-                p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'])
+                p, o = Worker.__motif_predict__(self.motifs, self.model, i, cfg.config[self.kind]['temperature'],
+                                                cfg.config[self.kind]['top_p'], cfg.config[self.kind]['motif_threshold'])
                 sentence_ids.append(o)
                 sentence.append(self.map_reverse[o])
         sentence = ' '.join(sentence)
@@ -212,7 +239,10 @@ class Worker:
                            lora_dropout=c['lora_dropout'],
                            lora_targets=c['lora_targets'],
                            add_causal_attn=c['add_causal_attn'],
-                           attn_heads=c['attn_heads'])
+                           attn_heads=c['attn_heads'],
+                           dropout=c['dropout'],
+                           output_dropout=c['output_dropout'],
+                           tie_weights=c['tie_weights'])
 
     @staticmethod
     def __read_sentences__(pth: str) -> [[str]]:
@@ -223,11 +253,8 @@ class Worker:
         return data
 
     @staticmethod
-    def __build_vocabulary__(pth: str) -> dict[str, int]:
-        data = []
-        for sentence in Worker.__read_sentences__(pth):
-            data += [word for word in sentence]
-        counter = collections.Counter(data)
+    def __build_vocabulary__(sentences: [[str]]) -> dict[str, int]:
+        counter = collections.Counter(word for sentence in sentences for word in sentence)
         count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         elements, _ = list(zip(*count_pairs))
         map_direct = dict(zip(elements, range(len(elements))))
@@ -235,24 +262,57 @@ class Worker:
         return map_direct
 
     @staticmethod
-    def __file_to_idx__(file: str, map_direct: dict[str, int]) -> [[int]]:
-        data = []
-        for sentence in Worker.__read_sentences__(file):
-            data.append([map_direct[word] for word in sentence])
-        return data
+    def __extra_sentences__(composer: str, kind: str, reference: [[str]], vocabulary: [[str]]) -> [[str]]:
+        # Parts of the composer's other instruments, used for training only. A part is kept when it fits in
+        # the pitch range of the reference parts, uses only tokens they already use (so the vocabulary does
+        # not grow), and shares no 12-token run with any reference part (this drops the reference parts
+        # themselves and lines that double them, so nothing leaks into validation).
+        generate_input(composer, [])
+        sentences = Worker.__read_sentences__(os.path.join(get_dir(composer, []), kind + '_input.txt'))
+        known = set(word for sentence in vocabulary for word in sentence)
+        run = 12
+        seen = set(tuple(sentence[i:i + run]) for sentence in reference for i in range(len(sentence) - run + 1))
+        in_range = Worker.__transpose_sentences__(
+            [sentence for sentence in sentences if all(word in known for word in sentence)], reference, 0, kind)
+        return [sentence for sentence in in_range
+                if not any(tuple(sentence[i:i + run]) in seen for i in range(len(sentence) - run + 1))]
 
     @staticmethod
-    def __load_data__(composer: str, instruments: [str], kind: str) -> ([[int]], int, dict[str, int], dict[int, str]):
-        crt_dir = get_dir(composer, instruments)
-        pth = os.path.join(crt_dir, kind + '_input.txt')
-        map_direct = Worker.__build_vocabulary__(pth)
-        data = Worker.__file_to_idx__(pth, map_direct)
-        vocabulary_size = len(map_direct)
-        map_reverse = dict(zip(map_direct.values(), map_direct.keys()))
-        return data, vocabulary_size, map_direct, map_reverse
+    def __transpose_sentences__(sentences: [[str]], reference: [[str]], max_shift: int, kind: str) -> [[str]]:
+        # Adds copies of each part shifted by -max_shift..+max_shift semitones. A copy is kept only if
+        # every pitch stays inside the pitch range of the real corpus, so the instrument range is respected.
+        cache = {}
+
+        def split(word: str) -> (str, str):
+            if kind == 'note':
+                pitch, duration = word.rsplit(TokenSeparator, 1)
+                return pitch, TokenSeparator + duration
+            return word, ''
+
+        def to_midi(pitch: str) -> int:
+            if pitch not in cache:
+                cache[pitch] = music21.pitch.Pitch(pitch).midi
+            return cache[pitch]
+
+        pitches = [to_midi(p) for sentence in reference for p, _ in map(split, sentence) if p != RestToken]
+        lowest, highest = min(pitches), max(pitches)
+        names = {m: str(music21.note.Note(m).nameWithOctave) for m in range(lowest, highest + 1)}
+        result = []
+        for sentence in sentences:
+            words = [split(word) for word in sentence]
+            midis = [to_midi(p) for p, _ in words if p != RestToken]
+            for shift in range(-max_shift, max_shift + 1):
+                if not midis or min(midis) + shift < lowest or max(midis) + shift > highest:
+                    continue
+                if shift == 0:
+                    result.append(sentence)
+                    continue
+                result.append([word if p == RestToken else names[to_midi(p) + shift] + d
+                               for word, (p, d) in zip(sentence, words)])
+        return result
 
     @staticmethod
-    def __split_data__(data: [[int]], ratio: float) -> ([[int]], [[int]]):
+    def __split_data__(data: [list], ratio: float) -> ([list], [list]):
         total = sum(len(sentence) for sentence in data)
         running = 0
         for idx, sentence in enumerate(data):
@@ -291,11 +351,13 @@ class Worker:
                         train_loader: DataLoader,
                         valid_loader: DataLoader,
                         loss_function: CrossEntropyLoss,
-                        optimizer: Adam,
+                        optimizer: AdamW,
                         csv_logger: str,
                         pth_best: str,
                         num_epochs: int = 10,
-                        patience: int = 0):
+                        patience: int = 0,
+                        grad_clip: float = 0.0,
+                        lr_decay: float = 0.0):
         best_valid_loss = float('inf')
         epochs_without_improvement = 0
         with open(csv_logger, 'wt') as file:
@@ -310,6 +372,8 @@ class Worker:
                     tokens = int((labels != IGNORE_INDEX).sum())
                     loss = loss_function(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
                     (loss / max(tokens, 1)).backward()
+                    if grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     optimizer.step()
                     total_train_loss += loss.item()
                     total_train_tokens += tokens
@@ -334,29 +398,46 @@ class Worker:
                     torch.save(model.state_dict(), pth_best)
                 else:
                     epochs_without_improvement += 1
+                    if 0 < lr_decay < 1:
+                        # Go back to the best weights and continue with a smaller learning rate,
+                        # instead of carrying on from weights that have started to overfit.
+                        model.load_state_dict(torch.load(pth_best, map_location=device))
+                        for group in optimizer.param_groups:
+                            group['lr'] *= lr_decay
                 file.write(f'{epoch + 1},{avg_train_loss:.4f},{avg_valid_loss:.4f},{int(improved)}\n')
                 file.flush()
                 if 0 < patience <= epochs_without_improvement:
                     break
 
     @staticmethod
-    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0) -> (float, int):
-        pred = pred.detach().numpy().astype(np.float64)[0]
-        pred = np.exp(pred / temp)
+    def __temp_sample__(pred: torch.FloatTensor, temp: float = 1.0, top_p: float = 1.0) -> (float, int):
+        # Temperature sampling, optionally restricted to the smallest set of tokens whose
+        # probabilities add up to top_p (nucleus sampling), which cuts off the unlikely tail.
+        pred = pred.detach().numpy().astype(np.float64)[0] / temp
+        pred = np.exp(pred - np.max(pred))
         pred = pred / np.sum(pred)
-        prob = np.random.multinomial(1, pred, 1)
-        return np.max(pred), np.argmax(prob)
+        prob_max = np.max(pred)
+        if top_p < 1.0:
+            order = np.argsort(-pred)
+            keep = order[:int(np.searchsorted(np.cumsum(pred[order]), top_p)) + 1]
+            nucleus = np.zeros_like(pred)
+            nucleus[keep] = pred[keep]
+            pred = nucleus / np.sum(nucleus)
+        return prob_max, int(np.random.choice(len(pred), p=pred))
 
     @staticmethod
-    def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
+    def __temp_predict__(model: Module, seq: list[int], temp: float = 1.0, top_p: float = 1.0) -> (float, int):
         with torch.no_grad():
             pred = model(torch.from_numpy(np.array(seq, dtype=int).reshape((1, -1))).long())[:, -1, :]
-        return Worker.__temp_sample__(pred, temp)
+        return Worker.__temp_sample__(pred, temp, top_p)
 
     @staticmethod
-    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0) -> (float, int):
-        prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp)
-        if prob_max > motif_threshold or not motif_augmentation:
+    def __motif_predict__(motifs: dict[str, int], model: Module, seq: list[int], temp: float = 1.0,
+                          top_p: float = 1.0, motif_threshold: float = 0.10) -> (float, int):
+        # When the model is unsure (top probability at or below motif_threshold), continue a frequent
+        # corpus motif instead. motif_threshold = 0 turns this off.
+        prob_max, prob_argmax = Worker.__temp_predict__(model, seq, temp, top_p)
+        if prob_max > motif_threshold:
             return prob_max, prob_argmax
 
         motifs_str = list(motifs.keys())
