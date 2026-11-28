@@ -66,10 +66,12 @@ class Worker:
         self.model: Optional[TorchModule] = None
 
     def path(self, suffix: str) -> str:
+        """Path of one of this model's files, for example path('model.torch') -> .../note_model.torch."""
         return os.path.join(self.crt_dir, f'{self.kind}_{suffix}')
 
     @property
     def vocabulary_size(self) -> int:
+        """Number of distinct tokens the model knows (its output size)."""
         return len(self.map_direct)
 
     # ----- data -----
@@ -97,6 +99,7 @@ class Worker:
         return sentences_trn, sentences_val
 
     def _set_vocabulary(self, map_direct: dict[str, int]):
+        """Sets the token -> id map and its inverse."""
         self.map_direct = map_direct
         self.map_reverse = {idx: word for word, idx in map_direct.items()}
 
@@ -124,6 +127,11 @@ class Worker:
     # ----- model -----
 
     def new_model(self, lora_enable: bool) -> TorchModule:
+        """A freshly initialised network sized for the current vocabulary and built from the config.
+
+        Training creates it without LoRA and adds the adapters after loading base_model; loading a
+        trained LoRA model needs them at once (lora_enable=True), so the saved keys match.
+        """
         c = self.c
         return TorchModule(self.vocabulary_size, self.map_direct, self.map_reverse, c['hidden_size'],
                            lora_enable=lora_enable,
@@ -150,13 +158,15 @@ class Worker:
             return pth_model
         c = self.c
 
+        # The vocabulary covers training (with transpositions and extra parts) and validation, so every
+        # validation token has an id.
         sentences_trn, sentences_val = self.training_sentences()
         self._set_vocabulary(build_vocabulary(sentences_trn + sentences_val))
         log(f'Vocabulary: {self.vocabulary_size} tokens')
         data_trn = [[self.map_direct[word] for word in sentence] for sentence in sentences_trn]
         data_val = [[self.map_direct[word] for word in sentence] for sentence in sentences_val]
         if c['motif_threshold'] > 0:
-            self.motifs()
+            self.motifs()   # build the motif cache now, while the vocabulary matches the training data
 
         window_stride = c['window_stride'] or max(1, c['number_of_steps'] // 4)
         d_trn = TorchDataset(*generate_xy(data_trn, c['number_of_steps'], window_stride))
@@ -180,6 +190,8 @@ class Worker:
 
         optimizer = AdamW([p for p in model.parameters() if p.requires_grad],
                           lr=c['learning_rate'], weight_decay=c['weight_decay'])
+        # The best weights so far are kept in '<kind>_model_best.torch' during training and moved to
+        # '<kind>_model.torch' at the end.
         pth_best = self.path('model_best.torch')
         train_model(model,
                     DataLoader(dataset=d_trn, batch_size=c['batch_size'], shuffle=True),
@@ -219,6 +231,8 @@ class Worker:
             self.load()
         seed_everything(seed)
         number_of_steps = self.c['number_of_steps']
+        # The prompt is taken from the whole input file joined into one stream, so it can span the end of
+        # one part and the start of the next.
         with open(self.path('input.txt'), 'rt') as file:
             content = file.read().split()
         start = random.randrange(0, len(content) - number_of_steps)
@@ -229,6 +243,7 @@ class Worker:
         generated = []
         with torch.no_grad():
             for _ in tqdm(range(length), desc='Generating'):
+                # A sliding context of the last number_of_steps tokens, the window length used in training.
                 token = self.next_token(sentence_ids[-number_of_steps:], motifs)
                 sentence_ids.append(token)
                 generated.append(self.map_reverse[token])
@@ -242,6 +257,7 @@ class Worker:
         """Samples the next token id. When the model is unsure (top probability at or below
         motif_threshold) a matching corpus motif is continued instead, if there is one."""
         with torch.no_grad():
+            # Only the prediction after the last token is needed.
             logits = self.model(torch.tensor([seq], dtype=torch.long))[:, -1, :]
         prob_max, token = sample(logits, self.c['temperature'], self.c['top_p'])
         if prob_max <= self.c['motif_threshold']:
@@ -254,6 +270,8 @@ class Worker:
 def sample(logits: torch.Tensor, temperature: float = 1.0, top_p: float = 1.0) -> tuple[float, int]:
     """Temperature sampling from logits of shape (1, vocabulary), optionally restricted to the smallest set
     of tokens whose probabilities add up to top_p (nucleus sampling). Returns (top probability, token id)."""
+    # Softmax in float64 (subtracting the maximum keeps exp from overflowing); temperatures below 1 make
+    # the distribution sharper, above 1 flatter. prob_max is measured after the temperature is applied.
     pred = logits.detach().numpy().astype(np.float64)[0] / temperature
     pred = np.exp(pred - np.max(pred))
     pred = pred / np.sum(pred)
@@ -284,6 +302,8 @@ def train_model(model: Module,
     Training stops after `patience` epochs in a row without improvement (0 means never early).
     One line per epoch goes to csv_logger: epoch, train_loss, validation_loss, best.
     """
+    # Summed, not averaged, per batch so that the epoch loss can be divided by the true number of tokens;
+    # each batch's gradient still uses the per-token mean.
     loss_function = CrossEntropyLoss(ignore_index=IGNORE_INDEX, reduction='sum')
     best_valid_loss = float('inf')
     epochs_without_improvement = 0
@@ -337,7 +357,11 @@ def train_model(model: Module,
 
 
 def main_train(composer: str, instruments: list[str], kind: str = 'note', retrain: bool = False) -> str:
-    """Builds the token files if needed and trains the model."""
+    """Builds the token files if needed and trains the model; returns the model path.
+
+    Seeding first makes the part order, the split, the initial weights and the batch order the same on
+    every run with the same settings.
+    """
     seed_everything(TRAIN_SEED)
     generate_input(composer, instruments)
     return Worker(composer, instruments, kind).train(retrain=retrain)
@@ -352,6 +376,7 @@ def main_generate(composer: str, instruments: list[str], kind: str = 'note', len
 
 
 if __name__ == '__main__':
+    # Train (if no model exists yet) and then generate DEFAULT_LENGTH notes with seed 0.
     if len(sys.argv) < 2:
         sys.exit('Usage: python model.py COMPOSER [INSTRUMENT ...]')
     main_train(sys.argv[1], sys.argv[2:])

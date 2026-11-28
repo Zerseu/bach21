@@ -28,6 +28,11 @@ class LoRAParam(nn.Module):
         nn.init.zeros_(self.B)
 
     def forward(self, W: torch.Tensor) -> torch.Tensor:
+        """The effective weight, W + scaling * B @ A (just W when r is 0).
+
+        self.dropout is created for configuration compatibility but not applied: a parametrization
+        sees the weight, not the layer input.
+        """
         if self.r == 0 or self.scaling == 0.0:
             return W
         return W + self.scaling * (self.B @ self.A)
@@ -79,7 +84,12 @@ def merge_all_lora(module: nn.Module) -> None:
 
 
 def mark_trainable_lora_only(model: nn.Module, train_bias: bool = True, train_layernorm: bool = True):
-    """Freezes everything except the LoRA matrices and, optionally, biases and LayerNorm weights."""
+    """Freezes everything except the LoRA matrices and, optionally, biases and LayerNorm weights.
+
+    Parameters are recognised by name: the LoRA matrices are the '.A' and '.B' parameters registered by
+    parametrize, biases end in 'bias' and LayerNorm weights must contain 'norm'. TorchModule's attention
+    LayerNorm is called 'ln', so only its bias (as a bias) is trained, and its scale stays frozen.
+    """
     total, trainable = 0, 0
     for n, p in model.named_parameters():
         total += p.numel()
