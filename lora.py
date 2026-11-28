@@ -1,7 +1,11 @@
 """Low-rank adapters (LoRA) for fine-tuning a trained model.
 
-Each wrapped weight W is used as W + (alpha / r) * B @ A, with small trainable matrices A and B and W
-frozen. B starts at zero, so a freshly wrapped model behaves exactly like the base model.
+Each wrapped weight W is used as W + (alpha / r) * B @ dropout(A), with small trainable matrices A and B
+and W frozen. B starts at zero, so a freshly wrapped model behaves exactly like the base model.
+
+The adapters are parametrizations, which see the weight rather than the layer input, so lora_dropout is
+applied to the adapter matrix A during training (dropping entries of the low-rank update) instead of
+to the input as in the original LoRA paper. In eval mode it does nothing.
 """
 from typing import Tuple
 
@@ -28,14 +32,13 @@ class LoRAParam(nn.Module):
         nn.init.zeros_(self.B)
 
     def forward(self, W: torch.Tensor) -> torch.Tensor:
-        """The effective weight, W + scaling * B @ A (just W when r is 0).
+        """The effective weight, W + scaling * B @ dropout(A) (just W when r is 0).
 
-        self.dropout is created for configuration compatibility but not applied: a parametrization
-        sees the weight, not the layer input.
+        Dropout is only active in train() mode, so evaluation and generation use the full update.
         """
         if self.r == 0 or self.scaling == 0.0:
             return W
-        return W + self.scaling * (self.B @ self.A)
+        return W + self.scaling * (self.B @ self.dropout(self.A))
 
 
 def inject_lora_into_lstm(lstm: nn.LSTM, r: int, alpha: float, dropout: float,
