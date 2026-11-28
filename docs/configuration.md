@@ -69,7 +69,7 @@ parts. More data makes each epoch slower: with the `[note]` values an epoch on 4
 | `base_model` | (empty) | (empty) | Path of a `note_model.torch` to start from. Needed for LoRA; without LoRA it continues training a model from those weights. Its shape settings and vocabulary must match. |
 | `lora_r` | (8) | 8 | Rank of the adapters. |
 | `lora_alpha` | (16) | 16 | The adapter update is scaled by `lora_alpha / lora_r`. |
-| `lora_dropout` | (0.05) | 0.05 | Accepted for compatibility; the adapters do not apply it. |
+| `lora_dropout` | (0.05) | 0.05 | Dropout on the adapter matrix A during training (the adapters see the weight, not the layer input, so it drops entries of the low-rank update). |
 | `lora_targets` | (`ih,hh,out,emb`) | `ih,hh,out,emb` | Which weights get adapters: LSTM input (`ih`) and recurrent (`hh`) weights, the output layer (`out`), and an extra identity projection after the embedding (`emb`). |
 
 Values in parentheses are not set in `[note]` and come from the default.

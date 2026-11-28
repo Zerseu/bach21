@@ -121,7 +121,7 @@ existing model files. The vocabulary is not part of the state; it is saved next 
 With LoRA (`lora_enable`), the network is first created without adapters, `base_model` is loaded into it,
 and then `apply_lora` wraps the chosen weights (`lora_targets`: LSTM input `ih` and recurrent `hh`
 weights, the output layer `out`, and an extra identity projection after the embedding `emb`) as
-`W + (alpha / r) * B @ A`. `lora_peft_only` freezes everything but the adapters and biases.
+`W + (alpha / r) * B @ dropout(A)`, with `lora_dropout` active only while training. `lora_peft_only` freezes everything but the adapters and biases.
 
 ## 6. Generation (`model.py`, `data.py`)
 
@@ -136,7 +136,8 @@ mode, then:
    set of tokens whose probabilities add up to `top_p`, and draw the next token.
 4. If `motif_threshold` > 0 and the most likely token's probability is at or below it, the next token
    of the most frequent matching corpus motif (a repeated run of 4 to 8 tokens, from `motifs.py`) is used
-   instead. This is off for the `[note]` model because it made the music less tonal.
+   instead. This is off for the `[note]` model because it made the music less tonal. The motifs are
+   counted once and cached in `note_motifs.json`; delete it to count them again.
 5. Writes the new tokens (and the prompt with `--keep-prompt`) to `note_output.txt`.
 
 `generate_output` then splits each token back into pitch and duration and writes a music21 stream (violin,

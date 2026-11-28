@@ -18,9 +18,8 @@ def _is_varied(motif: tuple[int, ...]) -> bool:
 def query_motifs(tokens: list[int], map_reverse: dict[int, str], motif_length: int,
                  motif_filter: bool = False) -> dict[str, int]:
     """Motifs of one length that occur more than once, as 'token token ...' -> count, most frequent first."""
-    # Note: the range stops one window short, so the motif ending at the last token is not counted.
     counts = collections.Counter(tuple(tokens[start:start + motif_length])
-                                 for start in range(len(tokens) - motif_length))
+                                 for start in range(len(tokens) - motif_length + 1))
     motifs = {' '.join(map_reverse[word] for word in motif): occurrences
               for motif, occurrences in counts.items()
               if occurrences > 1 and (not motif_filter or _is_varied(motif))}
