@@ -13,9 +13,11 @@ You need [Python](https://www.python.org/downloads/) 3.11 or newer. Then, in the
 2. Double-click **`generate_bach_violin.bat`**. It writes a new 1000-note piece to
    `bach21data\bach\violin\midi_output.mid` and `xml_output.musicxml`.
 
-The first time either script runs, it creates a virtual environment in `.venv` inside the project folder
-and installs everything from `requirements.txt` into it. Nothing goes into your system Python. Later runs
-reuse it and only reinstall when `requirements.txt` changes. To start over, delete the `.venv` folder.
+The first time either script runs, it creates a virtual environment in your user folder, at
+`%USERPROFILE%\.venvs\bach21` (for example `C:\Users\<you>\.venvs\bach21`), and installs everything from
+`requirements.txt` into it. The project folder stays clean and nothing goes into your system Python. Later
+runs reuse it and only reinstall when `requirements.txt` changes. To start over, delete that folder. To put
+the environment somewhere else, set `BACH21_VENV_DIR` to the folder you want before running a script.
 
 Both scripts pass extra options on to Python:
 
@@ -27,7 +29,7 @@ generate_bach_violin.bat --keep-prompt       rem also write the real Bach notes 
 ```
 
 PyTorch from PyPI is the CPU build. To train on an NVIDIA GPU, set `BACH21_TORCH_INDEX_URL` (for example
-to `https://download.pytorch.org/whl/cu128`) before the first run, or delete `.venv` and run again with it
+to `https://download.pytorch.org/whl/cu128`) before the first run, or delete `%USERPROFILE%\.venvs\bach21` and run again with it
 set.
 
 ## Running from Python directly (any OS)
@@ -72,7 +74,7 @@ in one go. Add `--help` to see every option.
 | File | What it does |
 | --- | --- |
 | `train_bach_violin.bat`, `generate_bach_violin.bat` | Windows entry points (see above) |
-| `scripts/setup_venv.bat` | Creates `.venv` and installs the dependencies; used by both `.bat` files |
+| `scripts/setup_venv.bat` | Creates the venv in `%USERPROFILE%\.venvs\bach21` and installs the dependencies; used by both `.bat` files |
 | `train.py`, `generate.py` | Command-line training and generation |
 | `config.ini` | Model, training and sampling settings, one section per model kind; `[note]` is the one used |
 | `config.py` | Reads `config.ini` (every key and its default is listed in `DEFAULTS`), project paths, logging, seeding |

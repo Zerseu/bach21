@@ -236,6 +236,5 @@ crashlytics-build.properties
 bach21cache/
 bach21data/
 
-# Local virtual environment created by the .bat scripts, and the run log
-.venv/
+# Run log
 bach21.log
