@@ -1,14 +1,21 @@
 """Preparing token sequences for training: reading, splitting, transposing, vocabulary and windows.
 
 A "sentence" is one part (one line of a ``*_input.txt`` file) as a list of tokens.
+
+Windows come in two kinds: ``generate_xy`` cuts fixed windows at a regular stride (used for validation,
+and for training when random_windows is off), and ``RandomWindows`` draws training windows at random
+starts. ``note_token_features`` gives the network the pitch and duration behind every note token.
 """
 import collections
+import math
 import os
+from typing import Iterator
 
 import numpy as np
+import torch
 from music21 import note, pitch
 
-from data import REST_TOKEN, TOKEN_SEPARATOR, generate_input, get_dir
+from data import DURATION_GRID, REST_TOKEN, TOKEN_SEPARATOR, generate_input, get_dir, split_note_token
 
 IGNORE_INDEX = -100   # target value the loss skips (padding)
 OVERLAP_RUN = 12      # an extra part sharing a run of this many tokens with a reference part is left out
@@ -26,6 +33,27 @@ def build_vocabulary(sentences: list[list[str]]) -> dict[str, int]:
     elements = [word for word, _ in sorted(counter.items(), key=lambda x: (-x[1], x[0]))]
     assert '' not in elements
     return {word: idx for idx, word in enumerate(elements)}
+
+
+def note_token_features(words: list[str]) -> tuple[list[int], list[int]]:
+    """What the network needs to know about note tokens such as 'C5_0.5' or 'RST_1', in the order given
+    (pass the vocabulary in id order): the MIDI pitch number of each token (-1 for a rest) and its
+    duration in DURATION_GRID steps (32nd notes), so 'C5_0.5' -> (72, 4).
+
+    Only valid for tokens of the 'note' kind; pitch-only or duration-only tokens raise ValueError.
+    """
+    cache: dict[str, int] = {}   # pitch name -> MIDI number; music21 parsing is slow, so each name once
+    midis, steps = [], []
+    for word in words:
+        name, quarter_length = split_note_token(word)
+        if name == REST_TOKEN:
+            midis.append(-1)
+        else:
+            if name not in cache:
+                cache[name] = int(pitch.Pitch(name).midi)
+            midis.append(cache[name])
+        steps.append(int(round(quarter_length / DURATION_GRID)))
+    return midis, steps
 
 
 def split_data(data: list[list], ratio: float) -> tuple[list[list], list[list]]:
@@ -79,7 +107,8 @@ def transpose_sentences(sentences: list[list[str]], reference: list[list[str]], 
 
 
 def extra_sentences(composer: str, kind: str, reference: list[list[str]], vocabulary: list[list[str]]) -> list[list[str]]:
-    """Parts of the composer's other instruments, for training only.
+    """Parts of a composer that are not parts of the reference instrument, for training only. `composer`
+    is usually the model's own composer (its other instruments), but can be any composer in the cache.
 
     A part is kept when it fits the pitch range of the reference parts, uses only tokens that
     `vocabulary` already has (so the vocabulary does not grow), and shares no OVERLAP_RUN-token run with
@@ -128,3 +157,64 @@ def generate_xy(data: list[list[int]], number_of_steps: int, window_stride: int)
     x = np.array(x, dtype=int).reshape((-1, number_of_steps))
     y = np.array(y, dtype=int).reshape((-1, number_of_steps))
     return x, y
+
+
+class RandomWindows:
+    """Training batches of windows that start at random places, redrawn for every batch.
+
+    generate_xy cuts each part into a fixed set of windows (one every window_stride tokens), and every
+    epoch then repeats exactly those windows. Here a window is drawn by picking a part with probability
+    proportional to its number of targets and then a start uniformly inside it. The network therefore
+    keeps seeing the same music at new alignments, which works like extra data augmentation, and an epoch
+    no longer has to visit every token window_stride-fold: one epoch is defined as
+    ceil(targets / (number_of_steps * batch_size)) batches, about one visit per token.
+
+    Inputs and targets have the same layout as generate_xy's: (batch_size, number_of_steps) token ids,
+    targets shifted by one, and parts shorter than a window right-padded (inputs with 0, targets with
+    IGNORE_INDEX).
+
+    Iterating over the object yields one epoch of (inputs, targets) batches on `device`; len() is the
+    number of batches per epoch. The draws come from a private generator seeded with `seed`, so runs are
+    reproducible and independent of other uses of the global random state.
+    """
+
+    def __init__(self, data: list[list[int]], number_of_steps: int, batch_size: int, seed: int = 0,
+                 device: torch.device = torch.device('cpu')):
+        data = [sentence for sentence in data if len(sentence) >= 2]   # a target needs a token before it
+        if not data:
+            raise ValueError('No training part has two or more tokens.')
+        self.number_of_steps = number_of_steps
+        self.batch_size = batch_size
+        self.device = device
+        # All parts in one long tensor, plus where each part starts and how long it is.
+        self.lengths = torch.tensor([len(sentence) for sentence in data], dtype=torch.long)
+        self.offsets = torch.cumsum(self.lengths, dim=0) - self.lengths
+        self.flat = torch.tensor([token for sentence in data for token in sentence], dtype=torch.long)
+        # A part of n tokens has n - 1 targets; drawing parts in that proportion treats all tokens alike.
+        self.weights = (self.lengths - 1).double()
+        self.batches_per_epoch = math.ceil(int(self.weights.sum()) / (number_of_steps * batch_size))
+        self.generator = torch.Generator().manual_seed(seed)
+
+    def __len__(self) -> int:
+        return self.batches_per_epoch
+
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+        for _ in range(self.batches_per_epoch):
+            yield self.batch()
+
+    def batch(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """One batch of random windows: (inputs, targets), both (batch_size, number_of_steps)."""
+        steps = self.number_of_steps
+        part = torch.multinomial(self.weights, self.batch_size, replacement=True, generator=self.generator)
+        length = self.lengths[part]
+        # A window needs steps + 1 tokens (inputs plus the one-step-shifted targets), so a part of n
+        # tokens has n - steps possible starts; shorter parts only have start 0 and get padded.
+        starts = (length - steps).clamp(min=1)
+        start = (torch.rand(self.batch_size, generator=self.generator) * starts).long()
+        start = torch.minimum(start, starts - 1)   # guards against rand() * starts rounding up to starts
+        position = start[:, None] + torch.arange(steps + 1)[None, :]            # position inside the part
+        inside = position < length[:, None]                                     # False where the part has ended
+        tokens = self.flat[(self.offsets[part][:, None] + position).clamp(max=len(self.flat) - 1)]
+        x = torch.where(inside[:, :-1], tokens[:, :-1], torch.zeros_like(tokens[:, :-1]))
+        y = torch.where(inside[:, 1:], tokens[:, 1:], torch.full_like(tokens[:, 1:], IGNORE_INDEX))
+        return x.to(self.device), y.to(self.device)

@@ -111,15 +111,17 @@ def _read_cached_parts(composer: str, instruments: list[str]) -> tuple[list[list
     """Pitches and durations of every cached part of the composer whose instrument name contains one of
     the given instrument names (every part when none is given).
 
-    The files of each folder are shuffled with the global random generator, so the part order (and the
-    train/validation split made from it) depends on the seed.
+    The files of each folder are sorted by name and then shuffled with the global random generator, so
+    the part order (and the train/validation split made from it) depends only on the seed.
     """
     ensure_cache()
     all_pitches = []
     all_durations = []
     for root, _, files in os.walk(CACHE_ROOT):
-        # os.walk lists files in file-system order (sorted on NTFS, not always on Linux), so the same seed
-        # can give a different part order, and so a different split, on different systems.
+        # os.walk lists files in file-system order, which is sorted on NTFS but arbitrary on most Linux
+        # file systems. Sorting first makes the shuffle, and so the train/validation split, the same on
+        # every system (and the same as it always was on Windows).
+        files.sort()
         random.shuffle(files)
         for file_name in files:
             if not file_name.endswith('.json') or composer.lower() not in file_name.lower():

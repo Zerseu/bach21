@@ -30,16 +30,22 @@ DEFAULTS: dict = {
     'hidden_size': None,              # embedding, LSTM and attention width
     'number_of_epochs': None,
     'window_stride': 0,               # 0 means number_of_steps // 4
+    'random_windows': False,          # train on windows at random starts instead of one every window_stride
     'early_stopping_patience': 0,     # stop after this many epochs without improvement; 0 never stops early
     'learning_rate': 1e-3,
     'weight_decay': 0.0,              # AdamW weight decay
     'grad_clip': 0.0,                 # gradient norm clipping; 0 turns it off
     'lr_decay': 0.0,                  # on a non-improving epoch reload the best weights and scale the LR by this
+    'lr_schedule': 'constant',        # 'constant', or 'cosine': warm up, then fall to 0 over number_of_epochs
+    'lr_warmup_steps': 0,             # batches of linear warm-up at the start of the cosine schedule
     'dropout': 0.25,                  # after the embedding
     'output_dropout': 0.0,            # before the output layer
     'tie_weights': False,             # share the input embedding and output layer weights
     'add_causal_attn': True,          # causal self-attention layer after the LSTM
     'attn_heads': 4,
+    'structured_embedding': False,    # token vector = token part + shared pitch part + shared duration part
+    'pitch_relations': False,         # pitch-class embedding, interval input and interval output scores
+    'pattern_pointers': False,        # scores for repeating the pitch / interval / duration of k notes ago
     # LoRA fine-tuning
     'lora_enable': False,
     'lora_r': 8,
@@ -51,9 +57,11 @@ DEFAULTS: dict = {
     # Training data
     'transpose': 0,                   # also train on copies shifted by up to +/- this many semitones
     'extra_training_data': False,     # add the composer's other parts that fit the instrument's range
+    'extra_composers': '',            # other composers whose fitting parts are added too, comma-separated
     'transpose_extra': 0,             # transposition for those extra parts
     # Sampling
     'temperature': None,
+    'rhythm_temperature': 0.0,        # note model: separate temperature for rests and durations; 0 = off
     'top_p': 1.0,                     # nucleus sampling; 1 turns it off
     'motif_threshold': 0.10,          # continue a corpus motif when the top probability is at or below this
 }
