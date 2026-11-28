@@ -1,17 +1,24 @@
 @echo off
 rem ---------------------------------------------------------------------------------------------
 rem Makes sure the project's own virtual environment exists and has every package that
-rem requirements.txt lists. The environment lives in .venv inside the project folder, so nothing
-rem is installed into your system Python. Called by train_bach_violin.bat and
+rem requirements.txt lists. The environment lives in your user folder, in
+rem %USERPROFILE%\.venvs\bach21 (for example C:\Users\<you>\.venvs\bach21), not in the project
+rem folder, and nothing is installed into your system Python. Called by train_bach_violin.bat and
 rem generate_bach_violin.bat; on success it sets VENV_PYTHON to the environment's python.exe.
 rem
 rem Optional: set BACH21_TORCH_INDEX_URL to install a GPU build of PyTorch, for example
 rem   set BACH21_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
-rem (the default from PyPI is the CPU build). Delete .venv to start over.
+rem (the default from PyPI is the CPU build).
+rem Optional: set BACH21_VENV_DIR to put the environment somewhere else.
+rem Delete the environment's folder to start over.
 rem ---------------------------------------------------------------------------------------------
 
 for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI"
-set "VENV_DIR=%PROJECT_DIR%\.venv"
+if defined BACH21_VENV_DIR (
+    set "VENV_DIR=%BACH21_VENV_DIR%"
+) else (
+    set "VENV_DIR=%USERPROFILE%\.venvs\bach21"
+)
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 set "REQUIREMENTS=%PROJECT_DIR%\requirements.txt"
 set "STAMP=%VENV_DIR%\requirements.installed"
@@ -34,7 +41,7 @@ if errorlevel 1 goto :install
 exit /b 0
 
 :install
-echo Installing the dependencies from requirements.txt into .venv ...
+echo Installing the dependencies from requirements.txt into %VENV_DIR% ...
 echo (the first time this downloads several hundred MB, mostly PyTorch)
 if not defined BACH21_TORCH_INDEX_URL goto :install_requirements
 set "TORCH_REQUIREMENT="
@@ -55,7 +62,7 @@ exit /b 1
 
 :install_failed
 echo Installing the dependencies failed. Check the messages above and your internet connection,
-echo then run the script again. Deleting the .venv folder starts from scratch.
+echo then run the script again. Deleting the folder %VENV_DIR% starts from scratch.
 exit /b 1
 
 :find_python

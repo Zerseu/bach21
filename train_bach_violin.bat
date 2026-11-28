@@ -2,7 +2,8 @@
 rem ---------------------------------------------------------------------------------------------
 rem Trains the note model on Bach's violin parts.
 rem
-rem On first use it creates .venv in this folder and installs the dependencies into it.
+rem On first use it creates a virtual environment in %USERPROFILE%\.venvs\bach21 (your user
+rem folder, not this one) and installs the dependencies into it.
 rem The trained model is saved to bach21data\bach\violin\note_model.torch, the losses per epoch
 rem to bach21data\bach\violin\note_log.csv. If a model already exists it is kept; pass
 rem --retrain to train again:   train_bach_violin.bat --retrain
