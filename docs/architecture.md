@@ -29,7 +29,8 @@ your own scores) and splits it by instrument with `instrument.partitionByInstrum
 - duration: the length in quarter notes, ignoring tuplet scaling (`quarterLengthNoTuplets`).
 
 Chords, and parts without a named instrument, are left out. All parts of one instrument in one score are
-joined. The result is one JSON file per score, named `<composer>_<NNNN>.json`, mapping each lower-case
+joined into a single line, so two violins in one score are not kept apart. The result is one JSON file
+per score, named `<composer>_<NNNN>.json`, mapping each lower-case
 instrument name to `[pitches, durations]`. The composer is the first folder of the score's corpus path.
 
 The repository ships the cache as `bach21cache.zip` (about 2,000 files); `ensure_cache` unpacks it the
@@ -127,9 +128,8 @@ the duration out of each token (`sequences.note_token_features`), so they only e
   from k notes ago again", one for "the interval from k notes ago again" and one for "the duration from k
   tokens ago again". Each is added to all tokens that would do exactly that. Repeating figures such as
   arpeggios and rhythms that return every few notes are everywhere in this music, and the pointers do
-  make the network predict real music a little better. The generated music did not get better, though,
-  and in one comparison far more pieces got stuck in a loop: in free generation the network's own
-  repeats are evidence for repeating again (see [results.md](results.md)). The option is kept for
+  make the network predict real music a little better. The generated music did not get better, though
+  (see [results.md](results.md#options-that-lower-the-loss-further)), so the option is off and kept for
   experiments.
 
 None of these look ahead: they only use tokens at or before the current position, so the model stays
@@ -168,7 +168,8 @@ options off the network is exactly the one from before they existed, and loads m
 With LoRA (`lora_enable`), the network is first created without adapters, `base_model` is loaded into it,
 and then `apply_lora` wraps the chosen weights (`lora_targets`: LSTM input `ih` and recurrent `hh`
 weights, the output layer `out`, and an extra identity projection after the embedding `emb`) as
-`W + (alpha / r) * B @ dropout(A)`, with `lora_dropout` active only while training. `lora_peft_only` freezes everything but the adapters and biases.
+`W + (alpha / r) * B @ dropout(A)`, with `lora_dropout` active only while training. `lora_peft_only`
+freezes everything but the adapters and biases.
 
 ## 6. Generation (`model.py`, `data.py`)
 
@@ -213,10 +214,11 @@ treble clef, bars of 4/4) as `midi_output.mid` and `xml_output.musicxml`.
   length from the instrument's real parts: share of rests, pitch-class entropy, share of notes in the
   best-fitting major scale, repeated pitches, steps, leaps over an octave, notes outside the usual range,
   duration entropy, distinct 4-grams, the share of pieces that got stuck in a loop (fewer than half of the
-  4-token runs in their second half are new), and the longest run copied verbatim from the corpus. Run
-  it with `--length 1000` as well: loops only show in full-length pieces.
-  `--temperature` and `--top-p` override the values in `config.ini` for one run, which makes it easy to
-  see what a sampling setting does before changing it.
+  4-token runs in their second half are new), and the longest run copied verbatim from the corpus.
+  Loops show best in full-length pieces (`--length 1000`), and all of these numbers are noisy: use at
+  least a hundred pieces (`--samples`) before reading anything into a difference.
+  `--temperature`, `--rhythm-temperature` and `--top-p` override the values in `config.ini` for one run,
+  which shows what a sampling setting does before you change it.
 
 ## Experimental model kinds
 

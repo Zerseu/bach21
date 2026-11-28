@@ -10,47 +10,36 @@ With tie_weights the Linear layer reuses the embedding matrix, so the plain mode
 (H + 1) * vocabulary + 8 * H * (H + 1) + 4 * H * (H + 1) + 2 * H weights (embedding and output bias,
 LSTM, attention, LayerNorm): 193 * vocabulary + 445,056 for H = 192.
 
-Three optional, music-aware extensions of the embedding and output layers (all need note tokens, i.e. the
-``note`` model kind, because they read the pitch and the duration out of every token):
+Three options make the first and last layer aware of what a token means musically. They read the pitch
+and the duration out of every token, so they need note tokens (the ``note`` model kind).
 
 structured_embedding
-    A plain embedding gives each of the ~800 pitch+duration tokens its own, unrelated vector, so the
-    network has to learn separately that ``C5_0.25`` and ``C5_0.5`` are the same pitch, and a token seen
-    five times is barely learned at all. With this option a token's vector is the sum of three parts:
+    A plain embedding gives each of the ~800 tokens an unrelated vector: the network must learn on its
+    own that ``C5_0.25`` and ``C5_0.5`` are the same pitch, and learns little about rare tokens. Here a
+    token's vector is a sum of three parts:
 
-        vector(token) = token part + pitch part(pitch of token) + duration part(duration of token)
+        vector(token) = token part + pitch part(its pitch) + duration part(its duration)
 
-    All tokens with the same pitch share the pitch part, all tokens with the same duration share the
-    duration part, and the token part only has to hold what is special about the combination. With
-    tie_weights the output layer uses the same summed matrix, so the sharing helps predictions too.
+    Tokens share the part for their pitch and the part for their duration; the token part only holds
+    what is special about the combination. With tie_weights the output layer uses the same sum.
     Extra weights: (pitches + durations) * H, about 16k for Bach violin.
 
 pitch_relations
-    Tells the network how pitches relate to each other, which it otherwise has to rediscover for every
-    key from examples:
+    Tells the network how pitches relate, which it would otherwise have to rediscover in every key:
     - a pitch-class part in the token vector (all C's share it, whatever the octave);
-    - an input embedding of the interval, in semitones, from the previous note to the current one;
-    - output scores per interval: on top of the usual score of every token, the network scores "the next
-      note lies k semitones above / below the last note", and that score is added to all tokens whose
-      pitch is at that interval. A melodic habit learned in one key then applies in every key.
+    - an input embedding of the interval, in semitones, from the previous note;
+    - an output score per interval: the score for "k semitones from the last note" is added to every
+      token whose pitch lies at that interval, so a melodic habit learned in one key holds in all.
     Extra weights: (13 + 2 * MAX_INTERVAL + 2) * H + (2 * MAX_INTERVAL + 1) * (H + 1), about 22k.
 
-pattern_pointers
-    Music is full of short repeating figures: an arpeggio played four times, a rhythm that comes back
-    every three notes, a melodic shape repeated one step higher. With this option the network can point
-    back at the last POINTER_SPAN notes instead of having to name the next token outright. For
-    k = 1..POINTER_SPAN it produces three extra scores:
+pattern_pointers (experimental, off in config.ini)
+    Lets the network point back at the last POINTER_SPAN notes. For k = 1..POINTER_SPAN it scores
     - "the pitch from k notes ago again": added to all tokens with that pitch;
     - "the interval from k notes ago again": added to all tokens whose pitch continues the melody by the
-      interval that was played k notes ago (k = 1 continues in the same direction by the same step);
+      interval played k notes ago (k = 1 repeats the last step);
     - "the duration from k tokens ago again": added to all tokens with that duration.
-    Like the interval scores these work the same in every key. Extra weights: 3 * POINTER_SPAN * (H + 1),
-    about 7k.
-
-    This option is experimental and off in config.ini. It lowers the held-out loss a little (0.03 nats)
-    but did not make the generated music better, and in one comparison many more of the generated pieces
-    got stuck repeating a figure: the network's own repeats are evidence for repeating again (see
-    docs/results.md).
+    Extra weights: 3 * POINTER_SPAN * (H + 1), about 7k. It lowers the held-out loss a little (0.03
+    nats), but the generated music did not get better (see docs/results.md).
 """
 from typing import Optional
 

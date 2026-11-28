@@ -72,8 +72,10 @@ stopped moving: epoch 11 improved on epoch 8 by 0.0007.
 
 Each row adds one change to the row above it. Every run had the same budget of 1,953 batches (16 million
 token predictions, about as many as the default training run), the same seed and the same schedule (random
-windows, cosine learning rate 0.002, gradient clipping 1.0), so the rows are directly comparable. S2 is
-the current default configuration.
+windows, cosine learning rate 0.002, gradient clipping 1.0), so the rows are directly comparable. They
+were made with a stand-alone test script that used the same data and the same network, not through
+`train.py`, so repeating them with `train.py` gives slightly different numbers: S2 is the current default
+configuration, which reaches 2.715 in the full run above.
 
 | Run | Network and data | Weights | Held-out loss | Pitch | Duration |
 | --- | --- | --- | --- | --- | --- |
@@ -92,11 +94,11 @@ What this shows:
 - **`structured_embedding`** gives -0.09 by sharing pitch and duration between tokens.
 - **`pattern_pointers`** gives another -0.03. In the held-out parts, 26% of the intervals repeat the
   interval played 6 notes earlier and 22% of the notes repeat the previous pitch, so there is a lot to
-  point at. It is **off**: the generated music did not get better (see
-  [Options that lower the loss further](#options-that-lower-the-loss-further)).
+  point at.
 - **More baroque music** gives -0.06 at the same number of batches. Handel and Vivaldi add 260,000
   tokens (551 parts) that pass the same range, vocabulary and no-doubling rules as Bach's other parts.
-  It is **off** for the same reason as the pointers.
+- Both of these are **off**, because the generated music did not get better; see
+  [Options that lower the loss further](#options-that-lower-the-loss-further).
 - **Music from other eras helps less.** Adding Mozart, Haydn, Beethoven, Schubert and Chopin as well
   (551,000 extra tokens in all) is still better than Bach alone, but a little worse than Handel and
   Vivaldi alone at this budget.
@@ -131,30 +133,30 @@ usual range is the pitch range that holds 99.8% of the real notes.
 What this shows:
 
 - **Staged sampling is what improves the pieces, for both networks.** With one temperature the rhythm
-  is monotonous (1.4 to 1.5 bits of duration entropy against 1.9 for real Bach), and a temperature low
-  enough to hold the key lets pieces lock into a figure. Sampling the pitch at 0.8 and rests and durations
-  at 1.0 brings the rhythm to the real level and cuts the stuck pieces to less than half.
+  is monotonous (1.4 to 1.5 bits of duration entropy against 1.9 for real Bach), and pieces lock into a
+  figure more easily. Sampling the pitch at 0.8 and rests and durations at 1.0 brings the rhythm to the
+  real level and cuts the stuck pieces to less than half.
 - **The music-aware network does not generate better pieces than the plain one.** Under the same
   sampling it gets stuck more often (8.3% against 2.8%, and 19.4% against 7.6% with one temperature) and
   holds the key a little less well (0.837 against 0.855). It repeats a pitch less often (0.27 against
-  0.35, real Bach 0.15) and strays outside the violin's range half as often. A network that thinks in
-  intervals follows a stray note into a new key, or a figure into a loop, more readily than one that
-  knows each key by heart; the loss, which is measured on real music one note at a time, does not see
-  what happens when the model builds on its own output for a thousand notes.
-- **Why it is the default anyway.** It predicts real music clearly better, it trains in a sixth of the
-  time, and against the previous defaults as a whole the pieces are no worse: as many get stuck (8.3%
-  against 7.6%), the key holds almost as well (0.837 against 0.854), and rhythm, pitch repetition and
-  range are closer to real Bach. If stable pieces matter more to you than the loss and the training
-  time, the plain network with staged sampling is the better choice; see
+  0.35, real Bach 0.15) and strays outside the violin's range half as often. A likely reason: a network
+  that thinks in intervals follows a stray note into a new key, or a figure into a loop, more readily
+  than one that knows each key by heart. The loss is measured on real music one note at a time and does
+  not see what happens when the model builds on its own output for a thousand notes.
+- **Why it is the default anyway.** It predicts real music better, it trains in a sixth of the time, and
+  against the previous defaults as a whole the pieces are no worse: as many get stuck (8.3% against
+  7.6%), the key holds almost as well (0.837 against 0.854), and rhythm, pitch repetition and range are
+  closer to real Bach. If stable pieces matter more to you than the loss and the training time, the plain
+  network with staged sampling is the better choice; see
   [Going back to the plain network](#going-back-to-the-plain-network).
 - **Both are still unlike real Bach:** too many repeated pitches, hardly any leaps over an octave, and
   a key that holds less well (real passages 0.905).
 - Neither copies the corpus: the longest verbatim run is about 7 tokens.
 
 With 144 pieces a share such as 8% is uncertain by about 2 percentage points either way, the in-key share
-by about 0.01, and repeated pitch and steps by up to about 0.03 (estimated from the runs described under
-[How noisy these statistics are](#how-noisy-these-statistics-are)). Differences smaller than that between
-two columns mean nothing.
+by about 0.01, and repeated pitch and steps by up to about 0.03 (see
+[How noisy these statistics are](#how-noisy-these-statistics-are)). Smaller differences between two
+columns mean nothing.
 
 ### Sampling settings
 
@@ -174,8 +176,7 @@ to 0.91), but it removed the large leaps almost entirely and raised the repeated
 
 ### Options that lower the loss further
 
-Two more changes lower the held-out loss a good deal. Both are off, because the generated pieces did not
-get better.
+Two more changes lower the held-out loss. Both are off, because the generated pieces did not get better.
 
 | Settings (full training run) | Batches | Held-out loss | Stuck in a loop (0.8 / 0.95) | Stuck in a loop (0.85 / 1.0) | In key (0.85 / 1.0) |
 | --- | --- | --- | --- | --- | --- |
@@ -184,14 +185,12 @@ get better.
 | + `extra_composers` and `pattern_pointers = true` | 3,864 | 2.540 | 19% (48 pieces) | not measured | not measured |
 
 - **Handel and Vivaldi** (144 pieces per cell): 0.15 lower loss for 75% more training, and pieces that
-  are not clearly better: the other measures go both ways within the noise, and the stuck share is a
-  little higher. Its differences are within the noise one at a time, but they point the same way in
-  every comparison made, including the short runs (S2 against S3 with one temperature, 48 pieces each:
-  2% against 21%).
-- **Pattern pointers.** In the short runs they raised the stuck share from 2% to 25% (S2 against S5, one
-  temperature, 48 pieces each). In the full runs with Handel and Vivaldi the two were about the same
-  (15% and 19% with pointers against 23% and 13% without, 48 pieces each). So: a slightly lower loss,
-  about 14% more time per batch, no measurable benefit for the music and one clear warning sign.
+  are not better. The other measures go both ways within the noise, and the stuck share is a little
+  higher in both comparisons, though neither difference is beyond the noise on its own.
+- **Pattern pointers** (48 pieces per number, so only large differences count): with Handel and Vivaldi
+  in the training data, 15% of the pieces got stuck with pointers against 23% without when sampling with
+  one temperature, and 19% against 13% with staged sampling. So: a slightly lower loss, about 14% more
+  time per batch, and no measurable effect on the music either way.
 
 ### Going back to the plain network
 
@@ -214,8 +213,9 @@ grad_clip = 0
 
 Single pieces differ a lot. Two runs of 48 pieces of 384 tokens that differed only in the seed were up to
 0.1 apart in repeated pitch and in steps, 0.16 bits in duration entropy, 0.04 in distinct 4-grams and 0.02
-in the in-key share. The share of stuck pieces came out at 2% in one run of 48 pieces and at 17% for
-another model of the same configuration. Use at least a hundred pieces before believing a difference.
+in the in-key share. The share of stuck pieces came out at 2% for the short test run S2 and at 17% for
+the full run of the same configuration, 48 pieces each. Use at least a hundred pieces before believing a
+difference.
 
 ## Earlier experiments
 
@@ -283,10 +283,11 @@ above.
 - Extra parts filtered for repetitiveness. Bach's other parts and the Handel and Vivaldi parts repeat
   themselves more than the violin parts do (0.74 to 0.77 distinct 4-grams in 1000 tokens against 0.83),
   so more music currently also means more accompaniment figures to imitate.
-- Cleaner parts. `cache.py` flattens every part into one line of notes, so where a part holds two
-  voices they end up interleaved, which shows as doubled notes and stuttering figures (the default prompt
-  of seed 0 is such a passage). Real passages repeat the previous pitch 15% of the time partly for this
-  reason, and the models exaggerate it. Keeping only the top voice when the cache is built would remove it.
+- Cleaner parts. Six of the 72 violin parts repeat the previous pitch more than 30% of the time (up to
+  65%) and hold 16% of the notes; the median part does so 10% of the time. The default prompt of seed 0
+  comes from such a part. A likely cause, not verified: `cache.py` joins all parts of one instrument in
+  a score into a single line, so two violins playing together come out interleaved. The models learn
+  these doubled notes and exaggerate them.
 - Parts of lower instruments moved up by an octave or two as further training data (558 more Bach
   parts, 169,000 tokens).
 - A second, untouched test set. All choices on this page were made on the same 14 validation parts.

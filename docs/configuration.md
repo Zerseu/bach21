@@ -1,7 +1,7 @@
 # Configuration
 
-Settings live in [`config.ini`](../config.ini), one section per model kind. `train.py` and `generate.py`
-use `[note]` unless `--kind` names another section. A key a section leaves out takes its default from
+Settings live in [`config.ini`](../config.ini), one section per model kind. `train.py`, `generate.py` and
+`evaluate.py` use `[note]` unless `--kind` names another section. A key a section leaves out takes its default from
 `DEFAULTS` in [`config.py`](../config.py); the type of that default decides how the value is read
 (`true`/`false`, whole number, decimal number or text). Keys marked *required* have no default. Unknown
 keys are ignored.
@@ -20,13 +20,13 @@ When a setting takes effect:
 | Key | `[note]` | Default | When | Meaning |
 | --- | --- | --- | --- | --- |
 | `number_of_steps` | 128 | required | model | Tokens per training window, and the context the model sees while generating. Also the prompt length. |
-| `hidden_size` | 192 | required | model | Width of the embedding, the LSTM and the attention layer. The main lever for model size: 256 gives about 1M weights, 192 about 600k. |
+| `hidden_size` | 192 | required | model | Width of the embedding, the LSTM and the attention layer. The main lever for model size: 256 gives about 1M weights, 192 about 640k. |
 | `tie_weights` | true | false | model | The output layer reuses the embedding matrix. Saves vocabulary × hidden_size weights and helps rare tokens. |
 | `add_causal_attn` | (true) | true | model | Adds the causal self-attention layer after the LSTM. |
 | `attn_heads` | (4) | 4 | model | Number of attention heads; must divide `hidden_size`. |
 | `structured_embedding` | true | false | model | A token's vector is the sum of a part of its own, a pitch part shared by all tokens of that pitch and a duration part shared by all tokens of that duration. Rare tokens then learn from common ones. Note model only. |
 | `pitch_relations` | true | false | model | Adds a pitch-class part to the token vector, the interval from the previous note as an input, and output scores per interval from the last note. What the network learns about melodic motion then holds in every key. Note model only. |
-| `pattern_pointers` | false | false | model | Experimental. Adds output scores for repeating the pitch, the interval or the duration found 1 to 12 notes back. It lowers the held-out loss by about 0.03, but the generated music was not better and in one comparison got stuck in loops far more often (see [results.md](results.md#full-length-pieces)), so it is off. Note model only. |
+| `pattern_pointers` | false | false | model | Experimental. Adds output scores for repeating the pitch, the interval or the duration found 1 to 12 notes back. It lowers the held-out loss by about 0.03 and costs about 14% more time per batch, but the generated music was not better (see [results.md](results.md#options-that-lower-the-loss-further)), so it is off. Note model only. |
 | `dropout` | 0.4 | 0.25 | training | Dropout after the embedding. |
 | `output_dropout` | 0.5 | 0.0 | training | Dropout before the output layer. |
 
@@ -54,7 +54,7 @@ Whatever the schedule, the model saved at the end is the one from the epoch with
 | --- | --- | --- | --- |
 | `transpose` | 6 | 0 | Also train on copies of each training part shifted by up to ± this many semitones, as long as they stay in the instrument's range. |
 | `extra_training_data` | true | false | Add other parts that fit the instrument's range, use only tokens the instrument's data already has, and do not double one of its parts: the composer's other instruments (when an instrument is given) and the composers in `extra_composers`. |
-| `extra_composers` | (empty) | (empty) | Other composers in the corpus cache whose fitting parts are added as well, comma-separated, for example `handel, vivaldi`. Needs `extra_training_data = true`. With Handel and Vivaldi the held-out loss falls by another 0.15 and training takes 75% longer, but the generated pieces were not better on any measure and got stuck in loops a little more often (see [results.md](results.md#full-length-pieces)), so the default trains on the model's own composer only. |
+| `extra_composers` | (empty) | (empty) | Other composers in the corpus cache whose fitting parts are added as well, comma-separated, for example `handel, vivaldi`. Needs `extra_training_data = true`. With Handel and Vivaldi the held-out loss falls by another 0.15 and training takes 75% longer, but the generated pieces were not better (see [results.md](results.md#options-that-lower-the-loss-further)), so the default trains on the model's own composer only. |
 | `transpose_extra` | 4 | 0 | Transposition range for all those extra parts. |
 
 These four only apply to the `note` and `pitch` kinds. Validation always uses the real, untransposed
@@ -90,7 +90,7 @@ A few settings are constants rather than config keys:
 
 | Constant | Value | Where | Meaning |
 | --- | --- | --- | --- |
-| `TRAIN_SEED` | 0 | `model.py` | Seed for the part order, split, initial weights and batch order. |
+| `TRAIN_SEED` | 0 | `model.py` | Seed for the part order, split, initial weights and training windows. |
 | `TRAIN_RATIO` | 0.8 | `model.py` | Share of the tokens, in whole parts, used for training. |
 | `DEFAULT_LENGTH` | 1000 | `model.py` | Default `--length`. |
 | `DURATION_GRID` | 0.125 | `data.py` | Durations are rounded to this many quarter notes (a 32nd note). |
@@ -98,6 +98,8 @@ A few settings are constants rather than config keys:
 | `FILTER_PARTS` | False | `data.py` | Drop rest-heavy and near-duplicate parts (slow). |
 | `FILTER_RESTS` | True | `data.py` | Leave rests out of `pitch_input.txt` / `duration_input.txt`. |
 | `OVERLAP_RUN` | 12 | `sequences.py` | An extra part sharing this many consecutive tokens with an instrument part is left out. |
+| `MAX_INTERVAL` | 24 | `network.py` | `pitch_relations` clips intervals to this many semitones up or down. |
+| `POINTER_SPAN` | 12 | `network.py` | How many notes back `pattern_pointers` can point. |
 | `MOTIF_MIN_LENGTH`, `MOTIF_MAX_LENGTH` | 4, 8 | `motifs.py` | Lengths of the motifs the fallback uses. |
 
 Changing anything in `data.py` needs the token files rebuilt: delete `bach21data/<composer>/`.

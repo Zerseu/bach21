@@ -120,7 +120,7 @@ def _read_cached_parts(composer: str, instruments: list[str]) -> tuple[list[list
     for root, _, files in os.walk(CACHE_ROOT):
         # os.walk lists files in file-system order, which is sorted on NTFS but arbitrary on most Linux
         # file systems. Sorting first makes the shuffle, and so the train/validation split, the same on
-        # every system (and the same as it always was on Windows).
+        # every system.
         files.sort()
         random.shuffle(files)
         for file_name in files:

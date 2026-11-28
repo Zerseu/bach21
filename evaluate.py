@@ -1,21 +1,20 @@
-"""Measure a trained model: its loss on held-out music, and how its generated music compares with the real parts.
+"""Measure a trained model: its loss on held-out music, and its generated music against the real parts.
 
     python evaluate.py bach violin
-    python evaluate.py bach violin --samples 48 --length 384 --temperature 0.9 --rhythm-temperature 1.0
+    python evaluate.py bach violin --samples 144 --length 1000 --temperature 0.85
 
-It prints two tables.
+It prints two things.
 
-1. Held-out loss. The per-token cross-entropy (nats) on the validation parts, the 20% of the instrument's
-   parts the model never trained on. This is the same number as the best validation_loss in note_log.csv.
-   For the note model it is also split into "which pitch (or rest) comes next" and "how long is it, given
-   the pitch", and shown by how many tokens of context the model had.
+1. Held-out loss: the per-token cross-entropy (nats) on the validation parts, the same number as the best
+   validation_loss in note_log.csv. For the note model it is also split into a pitch part and a duration
+   part, and shown by how many tokens of context the model had.
 
-2. Generated music against real music. `--samples` pieces of `--length` new tokens are sampled (each primed
-   with real notes, exactly as generate.py does) and compared with random passages of the same length from
-   the instrument's real parts. A good model has numbers close to the real column. Use `--length 1000` to
-   check full-length pieces: some problems, such as a piece getting stuck in a loop, only show there.
+2. Generated against real music: `--samples` pieces of `--length` new tokens, each primed with real notes
+   as generate.py does, compared with random real passages of the same length. A good model is close to
+   the real column. Pieces that get stuck in a loop show best at full length (`--length 1000`), and
+   the numbers are noisy below about a hundred pieces.
 
-Nothing is written to disk: the pieces are only measured. Run train.py first.
+No piece is saved. Run train.py first.
 """
 import argparse
 import collections
@@ -28,7 +27,7 @@ import torch
 import torch.nn.functional as F
 
 from config import log, seed_everything
-from data import REST_TOKEN, split_note_token
+from data import split_note_token
 from model import TRAIN_RATIO, Worker
 from sequences import IGNORE_INDEX, generate_xy, note_token_features, read_sentences, split_data
 
@@ -36,6 +35,8 @@ MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)   # semitones above the key note
 LOOP_DISTINCT = 0.5                    # a piece is "stuck in a loop" below this share of distinct 4-grams
 REAL_PASSAGES = 200                    # random real passages the generated pieces are compared with
 COPY_SEED_LENGTH = 4                   # corpus matches are searched from shared runs of this many tokens
+LOSS_BATCH = 64                        # validation windows scored at a time
+CONTEXT_BUCKETS = ((0, 3), (4, 15), (16, 31), (32, 63), (64, None))   # window positions; None = to the end
 
 
 # ----- held-out loss -----
@@ -43,46 +44,48 @@ COPY_SEED_LENGTH = 4                   # corpus matches are searched from shared
 def held_out_loss(worker: Worker) -> dict[str, float]:
     """Cross-entropy of the model on the validation windows, in nats per token.
 
-    Returns the overall loss ('loss'), its perplexity, the number of scored targets, the loss by context
-    length ('context a-b': targets at window positions a..b, which had that many tokens before them), and
-    for note tokens the split into 'pitch' and 'duration' parts.
+    Returns 'loss', 'perplexity', 'targets' (number of scored tokens), 'context a-b' (the loss of the
+    targets at window positions a..b, which had that many tokens before them) and, for note tokens,
+    'pitch' and 'duration'.
 
-    The split uses the chain rule: -log P(token) = -log P(pitch) - log P(duration | pitch), where
-    P(pitch) is the summed probability of all tokens with that pitch. The two parts add up to the loss.
+    The last two split the loss with the chain rule: -log P(token) = -log P(pitch) - log P(duration | pitch),
+    where P(pitch) is the summed probability of all tokens with that pitch (the rest counts as a pitch).
     """
     c = worker.c
-    sentences = read_sentences(worker.path('input.txt'))
-    _, sentences_val = split_data(sentences, TRAIN_RATIO)
+    steps = c['number_of_steps']
+    _, sentences_val = split_data(read_sentences(worker.path('input.txt')), TRAIN_RATIO)
     data_val = [[worker.map_direct[word] for word in sentence] for sentence in sentences_val]
-    window_stride = c['window_stride'] or max(1, c['number_of_steps'] // 4)
-    x, y = generate_xy(data_val, c['number_of_steps'], window_stride)
+    x, y = generate_xy(data_val, steps, c['window_stride'] or max(1, steps // 4))
     x, y = torch.from_numpy(x).long(), torch.from_numpy(y).long()
+    token_pitch = torch.from_numpy(worker.pitch_rows()[0]) if worker.kind == 'note' else None
+    pitches = int(token_pitch.max()) + 1 if token_pitch is not None else 0
 
+    # Sums per window position, added up batch by batch so that memory stays small for any corpus size.
+    nll_sum, pitch_sum, count = (torch.zeros(steps, dtype=torch.float64) for _ in range(3))
     with torch.no_grad():
-        log_probabilities = torch.cat([F.log_softmax(worker.model(x[start:start + 64]), dim=-1)
-                                       for start in range(0, len(x), 64)])           # (windows, T, vocabulary)
-    mask = y != IGNORE_INDEX
-    targets = y.clamp(min=0)   # padding targets become token 0 here and are masked out below
-    nll = -log_probabilities.gather(2, targets.unsqueeze(-1)).squeeze(-1)             # (windows, T)
-    count = int(mask.sum())
-    result = {'loss': float(nll[mask].sum()) / count, 'targets': count}
+        for start in range(0, len(x), LOSS_BATCH):
+            targets = y[start:start + LOSS_BATCH]
+            mask = targets != IGNORE_INDEX
+            targets = targets.clamp(min=0)   # padding becomes token 0 here and is masked out below
+            log_probability = F.log_softmax(worker.model(x[start:start + LOSS_BATCH]), dim=-1)
+            nll = -log_probability.gather(2, targets.unsqueeze(-1)).squeeze(-1)             # (windows, T)
+            nll_sum += (nll * mask).sum(dim=0)
+            count += mask.sum(dim=0)
+            if token_pitch is not None:
+                pitch_probability = torch.zeros(log_probability.shape[:2] + (pitches,))
+                pitch_probability.index_add_(2, token_pitch, log_probability.exp())        # sum tokens per pitch
+                pitch_nll = -pitch_probability.gather(2, token_pitch[targets].unsqueeze(-1)).squeeze(-1).log()
+                pitch_sum += (pitch_nll * mask).sum(dim=0)
+
+    total = float(count.sum())
+    result = {'loss': float(nll_sum.sum()) / total, 'targets': int(total)}
     result['perplexity'] = math.exp(result['loss'])
-
-    for first, last in ((0, 3), (4, 15), (16, 31), (32, 63), (64, c['number_of_steps'] - 1)):
-        if first <= last:
-            part = mask[:, first:last + 1]
-            if int(part.sum()) > 0:
-                result[f'context {first}-{last}'] = float(nll[:, first:last + 1][part].sum()) / int(part.sum())
-
-    if worker.kind == 'note':
-        # Row of each token's pitch (the rest counts as a pitch) among the distinct pitches.
-        names = [split_note_token(worker.map_reverse[idx])[0] for idx in range(worker.vocabulary_size)]
-        rows = {name: row for row, name in enumerate(sorted(set(names)))}
-        token_pitch = torch.tensor([rows[name] for name in names])
-        pitch_probability = torch.zeros(log_probabilities.shape[:2] + (len(rows),))
-        pitch_probability.index_add_(2, token_pitch, log_probabilities.exp())        # sum tokens per pitch
-        pitch_nll = -pitch_probability.gather(2, token_pitch[targets].unsqueeze(-1)).squeeze(-1).log()
-        result['pitch'] = float(pitch_nll[mask].sum()) / count
+    for first, last in CONTEXT_BUCKETS:
+        last = steps - 1 if last is None else min(last, steps - 1)
+        if first <= last and float(count[first:last + 1].sum()) > 0:
+            result[f'context {first}-{last}'] = float(nll_sum[first:last + 1].sum() / count[first:last + 1].sum())
+    if token_pitch is not None:
+        result['pitch'] = float(pitch_sum.sum()) / total
         result['duration'] = result['loss'] - result['pitch']
     return result
 
@@ -167,6 +170,8 @@ def generate_pieces(worker: Worker, samples: int, length: int, seed: int) -> lis
     steps = worker.c['number_of_steps']
     with open(worker.path('input.txt'), 'rt') as file:
         content = file.read().split()
+    if len(content) <= steps:
+        raise ValueError(f'The corpus has only {len(content)} tokens, too few for a prompt of {steps}.')
     contexts = []
     for _ in range(samples):
         start = random.randrange(0, len(content) - steps)
@@ -195,7 +200,7 @@ def compare_with_real(worker: Worker, samples: int, length: int, seed: int) -> t
     seed_everything(seed)
     long_parts = [sentence for sentence in corpus if len(sentence) >= length]
     if not long_parts:
-        raise ValueError(f'No part of the corpus has {length} tokens; use a smaller --length.')
+        raise ValueError(f'No part of the corpus has {length} tokens to compare with; use a smaller --length.')
     real = []
     for _ in range(REAL_PASSAGES):
         sentence = random.choices(long_parts, weights=[len(part) for part in long_parts])[0]
@@ -248,18 +253,23 @@ def main():
         if key.startswith('context'):
             log(f"  with {key.split()[1]:>7} tokens of context: {value:.4f}")
 
-    if arguments.samples > 0 and worker.kind == 'note':
-        real, generated = compare_with_real(worker, arguments.samples, arguments.length, arguments.seed)
-        rhythm = ''
-        if worker.c['rhythm_temperature'] > 0:
-            rhythm = f", rhythm temperature {worker.c['rhythm_temperature']:g}"
-        log(f"\nGenerated music ({arguments.samples} pieces of {arguments.length} tokens, temperature "
-            f"{worker.c['temperature']:g}{rhythm}, top_p {worker.c['top_p']:g}) against {REAL_PASSAGES} real passages:")
-        log(f"  {'':46s}{'real':>9s}{'generated':>11s}")
-        for key, value in generated.items():
-            log(f"  {key:46s}{real[key]:9.3f}{value:11.3f}" if key in real else f"  {key:46s}{'-':>9s}{value:11.3f}")
-    elif arguments.samples > 0:
+    if arguments.samples <= 0:
+        return
+    if worker.kind != 'note':
         log('\nThe comparison of generated and real music is only available for the note model.')
+        return
+    try:
+        real, generated = compare_with_real(worker, arguments.samples, arguments.length, arguments.seed)
+    except ValueError as error:
+        sys.exit(str(error))
+    c = worker.c
+    rhythm = f", rhythm temperature {c['rhythm_temperature']:g}" if c['rhythm_temperature'] > 0 else ''
+    log(f"\nGenerated music ({arguments.samples} pieces of {arguments.length} tokens, temperature "
+        f"{c['temperature']:g}{rhythm}, top_p {c['top_p']:g}) against {REAL_PASSAGES} real passages:")
+    log(f"  {'':46s}{'real':>9s}{'generated':>11s}")
+    for key, value in generated.items():
+        real_value = f'{real[key]:9.3f}' if key in real else f"{'-':>9s}"   # some rows have no real counterpart
+        log(f"  {key:46s}{real_value}{value:11.3f}")
 
 
 if __name__ == '__main__':

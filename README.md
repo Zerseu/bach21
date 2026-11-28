@@ -36,7 +36,7 @@ music and compares generated pieces with real ones.
 - Python 3.11 or newer.
 - About 1 GB of disk space for the virtual environment (mostly PyTorch) and about 80 MB for the
   unpacked corpus cache.
-- A CPU is enough. With the default settings training takes about 6 minutes on 4 CPU cores. An
+- A CPU is enough. With the default settings training takes roughly 6 minutes on 4 CPU cores. An
   NVIDIA GPU is used automatically when a CUDA build of PyTorch is installed.
 
 The Python packages are pinned in [`requirements.txt`](requirements.txt): music21, PyTorch, NumPy and tqdm
@@ -47,7 +47,7 @@ for training and generation, plus matplotlib, pandas and SciPy for `entropy.py`.
 You need [Python](https://www.python.org/downloads/) 3.11 or newer. Then, in the project folder:
 
 1. Double-click **`train_bach_violin.bat`**, or run it from a terminal. It trains the model on Bach's
-   violin parts. With the default settings this takes about 6 minutes on a 4-core CPU.
+   violin parts. With the default settings this takes roughly 6 minutes on a 4-core CPU.
 2. Double-click **`generate_bach_violin.bat`**. It writes a new 1000-note piece to
    `bach21data\bach\violin\midi_output.mid` and `xml_output.musicxml`.
 
@@ -100,7 +100,7 @@ python -m venv .venv
 .venv/bin/python evaluate.py bach violin       # optional: measure the trained model
 ```
 
-`train.py COMPOSER [INSTRUMENT ...]` and `generate.py COMPOSER [INSTRUMENT ...]` work for any composer and
+`train.py`, `generate.py` and `evaluate.py` take `COMPOSER [INSTRUMENT ...]` and work for any composer and
 instrument in the corpus cache (`python train.py bach cello`, `python train.py mozart violin`, ...). Without
 an instrument they use every part of the composer. Each composer and instrument gets its own folder in
 `bach21data/`, so models for different instruments do not overwrite each other.
@@ -146,20 +146,23 @@ run overwrites them, so copy a piece you want to keep.
 ### `evaluate.py`: measure a trained model
 
 ```
-python evaluate.py COMPOSER [INSTRUMENT ...] [--samples N] [--length N] [--seed S] [--temperature T] [--top-p P] [--kind KIND]
+python evaluate.py COMPOSER [INSTRUMENT ...] [--samples N] [--length N] [--seed S]
+                   [--temperature T] [--rhythm-temperature R] [--top-p P] [--kind KIND]
 ```
 
 | Argument | Meaning |
 | --- | --- |
 | `--samples` | Number of pieces to generate for the comparison with real music, default 24. `0` only prints the loss. |
-| `--length` | New tokens per piece, default 384. |
+| `--length` | New tokens per piece, default 384. Use 1000 to measure full-length pieces. |
 | `--seed` | Random seed for the prompts and for sampling, default 0. |
-| `--temperature`, `--top-p` | Use these sampling settings instead of the ones in `config.ini`, for this run only. |
+| `--temperature`, `--rhythm-temperature`, `--top-p` | Use these sampling settings instead of the ones in `config.ini`, for this run only. |
+| `--kind` | As for `train.py`. |
 
 It prints the model's loss on the held-out parts (the same number as the best `validation_loss` of
 training, split into pitch and duration) and a table that compares generated pieces with real passages:
-share of rests, how well they stay in key, steps and leaps, repetition, and whether anything is copied
-from the corpus. Nothing is written to the data folder. See
+share of rests, how well they stay in key, steps and leaps, repetition, pieces stuck in a loop, and
+whether anything is copied from the corpus. The table is noisy with the default 24 pieces; use
+`--samples 144` or so to compare two settings. No piece is saved. See
 [docs/architecture.md](docs/architecture.md#7-evaluation-evaluatepy) for what each number means.
 
 ### Other commands
@@ -277,15 +280,15 @@ layers) reach 2.85 on the same parts and take about six times as long to train. 
 from letting the network see and score intervals between notes.
 
 The generated pieces are a more mixed story. Sampling melody and rhythm with separate temperatures makes
-their rhythm as varied as real Bach's and halves the number of pieces that get stuck repeating one
-figure. The music-aware network itself does not generate better pieces than the plain one: it repeats
+their rhythm as varied as real Bach's and more than halves the number of pieces that get stuck repeating
+one figure. The music-aware network itself does not generate better pieces than the plain one: it repeats
 single pitches less, but it loses the key and falls into loops more easily. With the default settings
 about 1 piece in 12 gets stuck (try another `--seed`), the same as before, and 84% of the notes lie in the
 best-fitting major scale, against 85% before and 91% for real Bach.
 
 The full measurements, what each change contributes, and how to go back to the plain network are in
-[docs/results.md](docs/results.md); `python evaluate.py bach violin --length 1000` reproduces them for
-your own model.
+[docs/results.md](docs/results.md); `python evaluate.py bach violin --samples 144 --length 1000`
+reproduces them for your own model.
 
 ## Reproducibility
 
@@ -303,7 +306,7 @@ macOS. The losses can still differ in the last digits between CPU and GPU and be
 | "There is no trained model yet" | Run `train_bach_violin.bat` (or `train.py`) first. |
 | "... already exists, skipping training" | A model is already there. Pass `--retrain` to train a new one. |
 | Loading the model fails with a size mismatch | `config.ini` changed after training. Train again with `--retrain`, or restore the old settings. |
-| Training is slow | Lower `number_of_epochs` or `hidden_size` in `[note]` (see [docs/results.md](docs/results.md) for the quality cost), or use a GPU build of PyTorch. |
+| Training is slow | Lower `number_of_epochs` or `hidden_size` in `[note]` (the epoch table in [docs/results.md](docs/results.md) shows what fewer epochs cost), or use a GPU build of PyTorch. |
 | A piece is full of rests, or keeps repeating one figure | The model continues in the manner of its prompt, the 128 real notes it was primed with, and some prompts are sparse or repetitive accompaniment passages. Try another `--seed`; `--keep-prompt` writes the prompt too, so you can hear what it was given. |
 
 ## Known limitations
@@ -312,6 +315,10 @@ macOS. The losses can still differ in the last digits between CPU and GPU and be
 - Chords are not modelled: the cache keeps only single notes and rests.
 - Durations are rounded to a 32nd-note grid, so tuplets are approximated.
 - The model only sees the last 128 tokens, so there is no long-range form.
+- Generated pieces hold a key less firmly than real Bach, and about 1 in 12 gets stuck repeating one
+  figure (see [Results](#results)).
+- All parts of one instrument in a score are stored as a single line, so two violins in one score are
+  not kept apart.
 
 ## License
 

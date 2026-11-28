@@ -106,7 +106,8 @@ def transpose_sentences(sentences: list[list[str]], reference: list[list[str]], 
     return result
 
 
-def extra_sentences(composer: str, kind: str, reference: list[list[str]], vocabulary: list[list[str]]) -> list[list[str]]:
+def extra_sentences(composer: str, kind: str, reference: list[list[str]],
+                    vocabulary: list[list[str]]) -> list[list[str]]:
     """Parts of a composer that are not parts of the reference instrument, for training only. `composer`
     is usually the model's own composer (its other instruments), but can be any composer in the cache.
 
@@ -132,10 +133,11 @@ def extra_sentences(composer: str, kind: str, reference: list[list[str]], vocabu
 
 
 def generate_xy(data: list[list[int]], number_of_steps: int, window_stride: int) -> tuple[np.ndarray, np.ndarray]:
-    """Training windows. Each input is number_of_steps tokens and its target is the same window shifted by
-    one, so the loss covers every timestep. Windows start every window_stride tokens, plus one aligned to
-    the end of the part. Parts shorter than a window are right-padded (inputs with 0, targets with
-    IGNORE_INDEX); the model is causal, so the padding never affects the real positions.
+    """Fixed windows, used for validation and, with random_windows off, for training. Each input is
+    number_of_steps tokens and its target is the same window shifted by one, so the loss covers every
+    timestep. Windows start every window_stride tokens, plus one aligned to the end of the part. Parts
+    shorter than a window are right-padded (inputs with 0, targets with IGNORE_INDEX); the model is
+    causal, so the padding never affects the real positions.
 
     Returns two int arrays of shape (windows, number_of_steps). Parts shorter than two tokens are skipped.
     """
@@ -162,20 +164,17 @@ def generate_xy(data: list[list[int]], number_of_steps: int, window_stride: int)
 class RandomWindows:
     """Training batches of windows that start at random places, redrawn for every batch.
 
-    generate_xy cuts each part into a fixed set of windows (one every window_stride tokens), and every
-    epoch then repeats exactly those windows. Here a window is drawn by picking a part with probability
-    proportional to its number of targets and then a start uniformly inside it. The network therefore
-    keeps seeing the same music at new alignments, which works like extra data augmentation, and an epoch
-    no longer has to visit every token window_stride-fold: one epoch is defined as
+    generate_xy gives every epoch the same windows. Here each window is drawn anew: a part is picked with
+    probability proportional to its number of targets, then a start uniformly inside it, so the network
+    keeps meeting the same music at new alignments. One epoch is
     ceil(targets / (number_of_steps * batch_size)) batches, about one visit per token.
 
-    Inputs and targets have the same layout as generate_xy's: (batch_size, number_of_steps) token ids,
-    targets shifted by one, and parts shorter than a window right-padded (inputs with 0, targets with
-    IGNORE_INDEX).
+    The batches have generate_xy's layout: inputs and targets of shape (batch_size, number_of_steps),
+    targets shifted by one, short parts right-padded (inputs with 0, targets with IGNORE_INDEX).
 
-    Iterating over the object yields one epoch of (inputs, targets) batches on `device`; len() is the
-    number of batches per epoch. The draws come from a private generator seeded with `seed`, so runs are
-    reproducible and independent of other uses of the global random state.
+    Iterating yields one epoch of (inputs, targets) batches on `device`; len() is the number of batches
+    per epoch. The draws come from a private generator seeded with `seed`, so they are reproducible and
+    do not depend on other uses of the global random state.
     """
 
     def __init__(self, data: list[list[int]], number_of_steps: int, batch_size: int, seed: int = 0,

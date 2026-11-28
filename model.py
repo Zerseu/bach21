@@ -4,6 +4,7 @@ Use the command-line scripts rather than this module directly:
 
     python train.py bach violin                  # train bach21data/bach/violin/note_model.torch
     python generate.py bach violin --length 1000 # write a 1000-note piece as MIDI and MusicXML
+    python evaluate.py bach violin               # measure the trained model
 
 Running ``python model.py bach violin`` still does both steps, as it did before those scripts existed.
 """
@@ -29,7 +30,7 @@ from network import DEVICE, TorchModule
 from sequences import (IGNORE_INDEX, RandomWindows, build_vocabulary, extra_sentences, generate_xy,
                        note_token_features, read_sentences, split_data, transpose_sentences)
 
-TRAIN_SEED = 0          # fixes the part order, the train/validation split, initial weights and batch order
+TRAIN_SEED = 0          # fixes the part order, the train/validation split, initial weights and windows
 TRAIN_RATIO = 0.8       # share of the tokens (in whole parts) used for training; the rest is validation
 DEFAULT_LENGTH = 1000   # notes written by generate()
 
@@ -305,7 +306,7 @@ class Worker:
     def pitch_rows(self) -> tuple[np.ndarray, int]:
         """For note tokens: an array with, for every token id, the row of its pitch among the distinct
         pitches of the vocabulary (the rest counts as a pitch), and the row of the rest (-1 if the
-        vocabulary has no rest token). Used by the staged sampling in draw()."""
+        vocabulary has no rest token). Used by the staged sampling in draw() and by evaluate.py."""
         if self._pitch_rows is None:
             names = [split_note_token(self.map_reverse[idx])[0] for idx in range(self.vocabulary_size)]
             rows = {name: row for row, name in enumerate(sorted(set(names)))}
@@ -316,8 +317,8 @@ class Worker:
         """Draws the next token from logits of shape (1, vocabulary) with the sampling settings of
         config.ini; returns (top probability, token id).
 
-        With rhythm_temperature > 0 the note model samples in stages, with separate temperatures for
-        melody and rhythm (see sample_staged). Otherwise one temperature applies to whole tokens.
+        With rhythm_temperature > 0 the note model samples in stages (sample_staged), otherwise whole
+        tokens with one temperature (sample).
         """
         c = self.c
         if c['rhythm_temperature'] > 0 and self.kind == 'note':
@@ -360,7 +361,9 @@ def sample(logits: torch.Tensor, temperature: float = 1.0, top_p: float = 1.0) -
 def _sharpen(probabilities: np.ndarray, temperature: float) -> np.ndarray:
     """Applies a temperature to probabilities: p ** (1 / temperature), renormalised. Below 1 the likely
     choices become likelier, above 1 the distribution flattens; zero entries stay zero."""
-    powered = np.power(probabilities, 1.0 / temperature)
+    # Dividing by the largest entry first keeps it at exactly 1, so a low temperature cannot round
+    # every entry down to zero.
+    powered = np.power(probabilities / np.max(probabilities), 1.0 / temperature)
     return powered / np.sum(powered)
 
 
@@ -368,22 +371,20 @@ def sample_staged(logits: torch.Tensor, token_pitch: np.ndarray, rest_row: int, 
                   rhythm_temperature: float = 1.0, top_p: float = 1.0) -> tuple[float, int]:
     """Samples a note token in three stages, so that melody and rhythm can have different temperatures.
 
-    A single temperature on whole tokens cannot serve both: low enough to keep the melody in key, it
-    makes the rhythm monotonous (the generated durations are far less varied than real ones); high
-    enough for a lively rhythm, the melody wanders through keys. The stages use the model's own
-    probabilities P(token), only split up by the chain rule:
+    One temperature for whole tokens cannot serve both: low enough to keep the melody in key, it makes
+    the rhythm monotonous and lets pieces lock into a loop. The stages regroup the model's own
+    probabilities P(token) by the chain rule:
 
-    1. Rest or note? P(rest) is the summed probability of the rest tokens. This is a rhythmic decision,
-       so it is sharpened with rhythm_temperature.
-    2. Which pitch, if it is a note? P(pitch) is the summed probability of all tokens with that pitch,
-       sharpened with `temperature`, and optionally cut to the nucleus top_p.
-    3. How long? Among the tokens of the chosen pitch (or the rest tokens), P(token) sharpened with
+    1. Rest or note? P(rest) is the summed probability of the rest tokens. A rhythmic decision, so it
+       uses rhythm_temperature.
+    2. For a note, which pitch? P(pitch) is the summed probability of all tokens with that pitch. It
+       uses `temperature`, and optionally only the top_p nucleus of pitches.
+    3. How long? P(token) among the tokens of the chosen pitch (or the rest tokens), at
        rhythm_temperature.
 
-    logits: (1, vocabulary). token_pitch: for every token id the row of its pitch among the distinct
-    pitches; rest_row: the row of the rest, or -1 without rest tokens (see Worker.pitch_rows).
+    logits: (1, vocabulary). token_pitch and rest_row: see Worker.pitch_rows.
     Returns (top probability, token id). The top probability is that of the most likely whole token at
-    `temperature`, the same quantity sample() returns, so motif_threshold means the same in both.
+    `temperature`, as sample() returns it, so motif_threshold means the same with both.
     """
     scaled = logits.detach().numpy().astype(np.float64)[0]
     token_probability = np.exp(scaled - np.max(scaled))
@@ -423,15 +424,14 @@ def sample_staged(logits: torch.Tensor, token_pitch: np.ndarray, rest_row: int, 
 def make_scheduler(optimizer: AdamW, lr_schedule: str, warmup_steps: int, total_steps: int) -> Optional[LambdaLR]:
     """The learning-rate schedule named by config.ini's lr_schedule, stepped once per batch, or None.
 
-    'constant': no scheduler (returns None). The learning rate stays at learning_rate, apart from
-        train_model's drop on epochs without improvement (lr_decay).
-    'cosine':   the learning rate rises linearly from near 0 to learning_rate over the first warmup_steps
-        batches, then falls along half a cosine wave to 0 at the last batch of the last epoch:
+    'constant': None. The learning rate stays at learning_rate, apart from train_model's drop after an
+        epoch without improvement (lr_decay).
+    'cosine':   a linear rise to learning_rate over the first warmup_steps batches, then half a cosine
+        wave down to 0 at the last batch of the last epoch:
 
             factor(step) = min(1, (step + 1) / warmup_steps) * 0.5 * (1 + cos(pi * step / total_steps))
 
-        The warm-up keeps the first, badly scaled updates small; the slow fall lets the network take big
-        steps early and settle into a good solution at the end. The run then has a fixed length.
+        Large steps early, small steps to settle at the end, and a run of fixed length.
     """
     if lr_schedule == 'constant':
         return None
