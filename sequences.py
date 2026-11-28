@@ -15,6 +15,7 @@ OVERLAP_RUN = 12      # an extra part sharing a run of this many tokens with a r
 
 
 def read_sentences(pth: str) -> list[list[str]]:
+    """Reads a token file: one sentence (part) per line, tokens separated by spaces."""
     with open(pth, 'rt') as file:
         return [sentence.split() for sentence in file.read().strip('\n').split('\n')]
 
@@ -43,9 +44,10 @@ def transpose_sentences(sentences: list[list[str]], reference: list[list[str]], 
                         kind: str) -> list[list[str]]:
     """Each part shifted by -max_shift..+max_shift semitones (shift 0 is the part itself). A copy is kept
     only if all its pitches stay inside the pitch range of `reference`, so the instrument range holds."""
-    cache: dict[str, int] = {}
+    cache: dict[str, int] = {}   # pitch name -> MIDI number; music21 parsing is slow, so each name once
 
     def split(word: str) -> tuple[str, str]:
+        # 'C5_0.5' -> ('C5', '_0.5') for note tokens, so the duration can be re-attached unchanged.
         if kind == 'note':
             pitch_part, duration_part = word.rsplit(TOKEN_SEPARATOR, 1)
             return pitch_part, TOKEN_SEPARATOR + duration_part
@@ -69,6 +71,8 @@ def transpose_sentences(sentences: list[list[str]], reference: list[list[str]], 
             if shift == 0:
                 result.append(sentence)
             else:
+                # Pitch names come from note.Note(midi), the same spelling data.pitch_name uses, so a
+                # transposed token is spelled exactly like a real one.
                 result.append([word if p == REST_TOKEN else names[to_midi(p) + shift] + d
                                for word, (p, d) in zip(sentence, words)])
     return result
@@ -81,12 +85,17 @@ def extra_sentences(composer: str, kind: str, reference: list[list[str]], vocabu
     `vocabulary` already has (so the vocabulary does not grow), and shares no OVERLAP_RUN-token run with
     a reference part (this drops the reference parts themselves and lines that double them, so nothing
     leaks into validation).
+
+    reference: the instrument's own parts (training and validation, untransposed).
+    vocabulary: the sentences whose tokens make up the allowed vocabulary (the training parts, with
+    their transpositions, plus validation).
     """
-    generate_input(composer, [])
+    generate_input(composer, [])   # the composer's 'all' folder, every instrument
     sentences = read_sentences(os.path.join(get_dir(composer, []), kind + '_input.txt'))
     known = set(word for sentence in vocabulary for word in sentence)
     seen = set(tuple(sentence[i:i + OVERLAP_RUN])
                for sentence in reference for i in range(len(sentence) - OVERLAP_RUN + 1))
+    # A shift of 0 only filters by pitch range and adds no copies.
     in_range = transpose_sentences([sentence for sentence in sentences if all(word in known for word in sentence)],
                                    reference, 0, kind)
     return [sentence for sentence in in_range
@@ -97,12 +106,16 @@ def generate_xy(data: list[list[int]], number_of_steps: int, window_stride: int)
     """Training windows. Each input is number_of_steps tokens and its target is the same window shifted by
     one, so the loss covers every timestep. Windows start every window_stride tokens, plus one aligned to
     the end of the part. Parts shorter than a window are right-padded (inputs with 0, targets with
-    IGNORE_INDEX); the model is causal, so the padding never affects the real positions."""
+    IGNORE_INDEX); the model is causal, so the padding never affects the real positions.
+
+    Returns two int arrays of shape (windows, number_of_steps). Parts shorter than two tokens are skipped.
+    """
     x = []
     y = []
     for sentence in data:
         if len(sentence) < 2:
             continue
+        # A window needs number_of_steps + 1 tokens (inputs plus the one-step-shifted targets).
         last_start = max(0, len(sentence) - 1 - number_of_steps)
         starts = list(range(0, last_start + 1, window_stride))
         if starts[-1] != last_start:

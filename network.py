@@ -1,7 +1,19 @@
-"""The neural network: token embedding, one LSTM layer, optional causal self-attention, output layer."""
+"""The neural network: token embedding, one LSTM layer, optional causal self-attention, output layer.
+
+Shapes, with B the batch size, T the window length and H = hidden_size:
+
+    token ids (B, T) -> Embedding (B, T, H) -> [LoRA identity projection] -> Dropout
+      -> LSTM (B, T, H) -> CausalSelfAttention + residual + LayerNorm (B, T, H)
+      -> Dropout -> Linear (B, T, vocabulary) logits
+
+With tie_weights the Linear layer reuses the embedding matrix, so the model has
+(H + 1) * vocabulary + 8 * H * (H + 1) + 4 * H * (H + 1) + 2 * H weights (embedding and output bias,
+LSTM, attention, LayerNorm): 193 * vocabulary + 445,056 for H = 192.
+"""
 import torch
 from torch.nn import Module
 
+# Training runs on the GPU when PyTorch sees one; generation always moves the model to the CPU.
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -13,14 +25,17 @@ class CausalSelfAttention(Module):
         super().__init__()
         self.mha = torch.nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.ln = torch.nn.LayerNorm(d_model)
+        # Cached mask, not saved with the model (persistent=False), so model files stay compatible.
         self.register_buffer('_mask', None, persistent=False)
 
     def _causal_mask(self, length: int, device) -> torch.Tensor:
+        """(length, length) bool mask, True above the diagonal: position i may not attend to j > i."""
         if self._mask is None or self._mask.size(0) != length:
             self._mask = torch.triu(torch.ones(length, length, device=device), diagonal=1).bool()
         return self._mask
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, T, d_model) -> (B, T, d_model)."""
         mask = self._causal_mask(x.size(1), x.device)
         y, _ = self.mha(x, x, x, attn_mask=mask)
         return self.ln(x + y)
@@ -32,6 +47,10 @@ class TorchModule(Module):
 
     The attribute names below are the keys of saved model files, so renaming them breaks loading
     existing ``*_model.torch`` files.
+
+    map_direct / map_reverse are the token <-> id maps; they are kept on the module for convenience but
+    are not part of the saved state (the vocabulary is saved separately as ``<kind>_vocabulary.json``).
+    The LoRA arguments only matter when lora_enable is True; see ``apply_lora``.
     """
 
     def __init__(self, vocabulary_size: int, map_direct: dict[str, int], map_reverse: dict[int, str], hidden_size: int,
@@ -55,7 +74,7 @@ class TorchModule(Module):
             torch.nn.init.uniform_(self.embedding.weight, -0.1, 0.1)
             self.linear.weight = self.embedding.weight
 
-        self.emb_post = None
+        self.emb_post = None   # only created by apply_lora with the 'emb' target
         self.post_attn = CausalSelfAttention(hidden_size, n_heads=attn_heads) if add_causal_attn else None
 
         if lora_enable:
@@ -85,11 +104,12 @@ class TorchModule(Module):
         self.to(DEVICE)
 
     def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
+        """Token ids (B, T) -> logits (B, T, vocabulary). Dropout is only active in train() mode."""
         x = self.embedding(x)
         if self.emb_post is not None:
             x = self.emb_post(x)
         x = self.dropout(x)
-        x, _ = self.lstm(x)
+        x, _ = self.lstm(x)   # every window starts from a zero state; nothing is carried between windows
         if self.post_attn is not None:
             x = self.post_attn(x)
         x = self.output_dropout(x)

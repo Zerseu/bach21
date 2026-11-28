@@ -72,10 +72,16 @@ class Config:
                                     for key, default in DEFAULTS.items()}
 
     def __getitem__(self, kind: str) -> dict:
+        """All settings of one section, for example ``Config()['note']['hidden_size']``."""
         return self.config[kind]
 
     @staticmethod
     def _read(parser: configparser.ConfigParser, section: str, key: str, default):
+        """One value of a section, parsed with the type of its default (bool, int, float or str).
+
+        Raises KeyError when a required key (default None) is missing. Keys in config.ini that are not
+        in DEFAULTS are ignored.
+        """
         if default is None:
             if not parser.has_option(section, key):
                 raise KeyError(f'config.ini [{section}] is missing the required key "{key}"')
@@ -91,14 +97,18 @@ class Config:
 
 
 def log(*values: object):
-    """Prints to the console and appends to bach21.log."""
+    """Prints to the console and appends the same line to bach21.log (the file only ever grows)."""
     print(*values, file=stdout, flush=True)
     with open(LOG_PATH, 'at', encoding='utf-8') as file:
         print(*values, file=file, flush=True)
 
 
 def seed_everything(seed: int):
-    """Seeds Python, NumPy and PyTorch so data order, initial weights and sampling are reproducible."""
+    """Seeds Python, NumPy and PyTorch so data order, initial weights and sampling are reproducible.
+
+    Results are reproducible on the same machine and library versions; CPU and GPU runs, or different
+    PyTorch versions, can still differ in the last digits and so in later sampled tokens.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

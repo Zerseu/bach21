@@ -18,6 +18,7 @@ def _is_varied(motif: tuple[int, ...]) -> bool:
 def query_motifs(tokens: list[int], map_reverse: dict[int, str], motif_length: int,
                  motif_filter: bool = False) -> dict[str, int]:
     """Motifs of one length that occur more than once, as 'token token ...' -> count, most frequent first."""
+    # Note: the range stops one window short, so the motif ending at the last token is not counted.
     counts = collections.Counter(tuple(tokens[start:start + motif_length])
                                  for start in range(len(tokens) - motif_length))
     motifs = {' '.join(map_reverse[word] for word in motif): occurrences
@@ -39,7 +40,12 @@ def query_all_motifs(pth: str, map_direct: dict[str, int], map_reverse: dict[int
 
 
 def motif_continuation(motifs: dict[str, int], map_direct: dict[str, int], seq: list[int]):
-    """The next token of the most frequent motif whose beginning matches the end of seq, or None."""
+    """The next token of the most frequent motif whose beginning matches the end of seq, or None.
+
+    A motif of n tokens matches when its first n - 1 tokens equal the last n - 1 tokens of seq; its last
+    token is then the continuation. motifs must be ordered most frequent first (as query_all_motifs
+    returns them), since the first match wins.
+    """
     for motif in motifs:
         motif_ids = [map_direct[word] for word in motif.split()]
         length = min(len(seq), len(motif_ids) - 1)

@@ -40,10 +40,12 @@ def quantize_duration(in_duration: float) -> float:
 
 
 def make_note_token(pitch: str, quarter_length: float) -> str:
+    """Joins a pitch name (or REST_TOKEN) and a duration in quarter notes: ('C5', 0.5) -> 'C5_0.5'."""
     return f'{pitch}{TOKEN_SEPARATOR}{quarter_length:g}'
 
 
 def split_note_token(token: str) -> tuple[str, float]:
+    """The inverse of make_note_token: 'C5_0.5' -> ('C5', 0.5). Splits at the last separator."""
     pitch, quarter_length = token.rsplit(TOKEN_SEPARATOR, 1)
     return pitch, float(quarter_length)
 
@@ -82,7 +84,11 @@ def get_dir(composer: str, instruments: list[str]) -> str:
 
 
 def lcs(a: list[float], b: list[float]) -> list[float]:
-    """Longest common contiguous run of a and b (used by FILTER_PARTS)."""
+    """Longest common contiguous run of a and b (used by FILTER_PARTS).
+
+    Dynamic programming over two rolling rows: dp[i % 2][j] is the length of the common run that ends
+    at a[i - 1] and b[j - 1]. O(len(a) * len(b)) time, which is why FILTER_PARTS is off by default.
+    """
     m, n = len(a), len(b)
     if m == 0 or n == 0:
         return []
@@ -112,12 +118,16 @@ def _read_cached_parts(composer: str, instruments: list[str]) -> tuple[list[list
     all_pitches = []
     all_durations = []
     for root, _, files in os.walk(CACHE_ROOT):
+        # os.walk lists files in file-system order (sorted on NTFS, not always on Linux), so the same seed
+        # can give a different part order, and so a different split, on different systems.
         random.shuffle(files)
         for file_name in files:
             if not file_name.endswith('.json') or composer.lower() not in file_name.lower():
                 continue
             with open(os.path.join(root, file_name), 'rt') as file:
                 parts = json.load(file)
+            # A part matches when the requested name is a substring of its instrument name, so 'violin'
+            # also picks up for example 'violin i' and 'violin ii'.
             for part in parts:
                 if len(instruments) == 0:
                     all_pitches.append(parts[part][0])
@@ -154,7 +164,11 @@ def _filter_parts(all_pitches: list[list[float]], all_durations: list[list[float
 
 
 def generate_input(composer: str, instruments: list[str]):
-    """Writes note_input.txt, pitch_input.txt and duration_input.txt unless they already exist."""
+    """Writes note_input.txt, pitch_input.txt and duration_input.txt unless they already exist.
+
+    The files are never rebuilt once they are there: delete them (or the whole data folder) after
+    changing the tokenisation or the cache.
+    """
     crt_dir = get_dir(composer, instruments)
     pth_pitches = os.path.join(crt_dir, 'pitch_input.txt')
     pth_durations = os.path.join(crt_dir, 'duration_input.txt')
@@ -228,6 +242,8 @@ def generate_output(composer: str, instruments: list[str], kind: str = 'note') -
             durations = [0.25 for _ in pitches]
     assert len(pitches) == len(durations)
 
+    # The score is always written as a violin part in treble clef, whatever the model was trained on.
+    # makeMeasures splits the flat note list into 4/4 bars (music21's default time signature).
     composition = stream.Stream()
     composition.append(clef.TrebleClef())
     composition.append(instrument.Violin())
